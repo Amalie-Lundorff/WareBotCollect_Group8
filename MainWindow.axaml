@@ -1,0 +1,366 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:Login"
+        x:Class="Login.MainWindow"
+        mc:Ignorable="d"
+        d:DesignWidth="1000"
+        d:DesignHeight="700"
+        d:DataContext="{d:DesignInstance Type=local:MainWindow, IsDesignTimeCreatable=True}"
+        x:CompileBindings="False"
+        Title="SystemLogin">
+
+    <!-- STYLES -->
+    <Window.Styles>
+        <Style Selector="TextBox, Button, CheckBox">
+            <Setter Property="Margin" Value="5"/>
+        </Style>
+        <Style Selector="TextBlock">
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+    </Window.Styles>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="100"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- TABS -->
+        <TabControl Grid.Row="0" Name="MainTabControl">
+
+            <!-- LOGIN -->
+            <TabItem Header="🔑 Login">
+                <StackPanel Margin="20" Spacing="20">
+                    <TextBlock Text="Login" FontWeight="Bold" FontSize="16"/>
+                    <TextBox Name="LoginUsername" Watermark="Username"/>
+                    <TextBox Name="LoginPassword" Watermark="Password" PasswordChar="●"/>
+                    <Button Content="Login" Width="160" Click="LoginButton_OnClick"/>
+
+                    <Separator/>
+
+                    <TextBlock Text="Create user" FontWeight="Bold" FontSize="16"/>
+                    <TextBox Name="CreateUserUsername" Watermark="Username"/>
+                    <TextBox Name="CreateUserPassword" Watermark="Password" PasswordChar="●"/>
+
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="Is admin"/>
+                        <CheckBox Name="CreateUserIsAdmin"/>
+                    </StackPanel>
+
+                    <Button Content="Create user ✅"
+                            Width="180"
+                            Click="CreateUserButton_OnClick"/>
+                </StackPanel>
+            </TabItem>
+
+            <!-- ADMIN -->
+            <TabItem Header="🦾 Admin">
+                <Grid Margin="20">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Text="Previous orders"
+                               FontSize="20"
+                               FontWeight="Bold"
+                               Margin="0,0,0,16"/>
+
+                    <Grid Grid.Row="1">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="100"/>
+                            <ColumnDefinition Width="150"/>
+                            <ColumnDefinition Width="100"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Order ID" FontWeight="Bold"/>
+                        <TextBlock Text="Date" Grid.Column="1" FontWeight="Bold"/>
+                        <TextBlock Text="Quantity" Grid.Column="2" FontWeight="Bold"/>
+                    </Grid>
+
+                    <ItemsControl Grid.Row="2" ItemsSource="{Binding PreviousOrders}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="100"/>
+                                        <ColumnDefinition Width="150"/>
+                                        <ColumnDefinition Width="100"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="{Binding OrderId}"/>
+                                    <TextBlock Text="{Binding CreatedAt}" Grid.Column="1"/>
+                                    <TextBlock Text="{Binding TotalQuantity}" Grid.Column="2"/>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <Button Grid.Row="3"
+                            Content="Place new order"
+                            Width="240"
+                            Height="56"
+                            HorizontalAlignment="Right"
+                            Margin="0,20,0,0"
+                            Click="OnPlaceOrderClick"/>
+                </Grid>
+            </TabItem>
+
+<!-- DATABASE -->
+<TabItem Header="🛢 Database">
+    <DockPanel Margin="20">
+
+        <!-- CONFIRM BUTTON -->
+        <Button Content="Confirm order completed"
+                DockPanel.Dock="Bottom"
+                HorizontalAlignment="Right"
+                Margin="0,20,0,0"
+                Width="200"
+                Height="32"
+                Background="Green"
+                Foreground="White"
+                Command="{Binding DataContext.ConfirmOrderCommand,
+                  RelativeSource={RelativeSource AncestorType=Window}}"/>
+
+
+
+        <!-- MAIN GRID -->
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="150"/>
+                <ColumnDefinition Width="200"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- ORDER HEADER -->
+            <TextBox Grid.Row="0"
+                     Grid.ColumnSpan="2"
+                     Text="Order"
+                     FontSize="17"
+                     TextAlignment="Center"
+                     Background="#FF120F75"
+                     Foreground="White"
+                     Height="32"
+                     Width="350"
+                     HorizontalAlignment="Center"
+                     Margin="0,10"/>
+
+            <!-- COLUMN HEADERS -->
+            <TextBox Grid.Row="1"
+                     Grid.Column="0"
+                     Text="Quantity"
+                     TextAlignment="Center"
+                     FontWeight="Bold"
+                     Foreground="#FF04006B"
+                     Height="32"
+                     Margin="0,5"/>
+
+            <TextBox Grid.Row="1"
+                     Grid.Column="1"
+                     Text="Component"
+                     TextAlignment="Center"
+                     FontWeight="Bold"
+                     Foreground="#FF04006B"
+                     Height="32"
+                     Margin="0,5"/>
+
+            <!-- DATABASE DATA -->
+            <ItemsControl Grid.Row="2"
+                          Grid.ColumnSpan="2"
+                          ItemsSource="{Binding DatabaseOrderLines}">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="150"/>
+                                <ColumnDefinition Width="200"/>
+                            </Grid.ColumnDefinitions>
+
+                            <TextBlock Grid.Column="0"
+                                       Text="{Binding Quantity}"
+                                       TextAlignment="Center"
+                                       FontSize="14"
+                                       Height="24"/>
+
+                            <TextBlock Grid.Column="1"
+                                       Text="{Binding ProductName}"
+                                       TextAlignment="Center"
+                                       FontSize="14"
+                                       Height="24"/>
+                        </Grid>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+            <Button Grid.Row="3"
+                    Grid.Column="0"
+                    Content="Process order"
+                    Width="140"
+                    Height="32"
+                    Background="#1E60FF"
+                    Foreground="White"
+                    Margin="0,20,0,0"
+                    HorizontalAlignment="Left"
+                    Command="{Binding DataContext.ProcessOrderCommand,
+                          RelativeSource={RelativeSource AncestorType=Window}}"/>
+            
+        </Grid>
+    </DockPanel>
+</TabItem>
+
+
+                                 <!-- CREATE ORDER -->
+            <TabItem Header="📝 Create Order">
+                <Grid Margin="20">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="2*"/>
+                        <ColumnDefinition Width="3*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <!-- USER INFO -->
+                    <StackPanel Grid.Row="0" Grid.Column="0">
+                        <TextBlock Text="Your information"
+                                   FontWeight="Bold"
+                                   FontSize="16"/>
+                        <StackPanel IsVisible="{Binding IsLoggedIn}">
+                            <TextBlock Text="Admin ID #"/>
+                            <TextBlock Text="{Binding CurrentUserId}"/>
+                        </StackPanel>
+                    </StackPanel>
+
+                    <!-- PRODUCTS -->
+                    <StackPanel Grid.Row="0" Grid.Column="1">
+                        <TextBlock Text="Products"
+                                   FontWeight="Bold"
+                                   FontSize="16"/>
+                        <ItemsControl ItemsSource="{Binding AvailableProducts}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="40"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+
+                                        <Button Content="▼"
+                                                Command="{Binding DataContext.DecreaseQtyCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                CommandParameter="{Binding}"/>
+
+                                        <Button Content="▲"
+                                                Grid.Column="1"
+                                                Command="{Binding DataContext.IncreaseQtyCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                CommandParameter="{Binding}"/>
+
+                                        <TextBlock Grid.Column="2"
+                                                   Text="{Binding Quantity}"
+                                                   HorizontalAlignment="Center"/>
+
+                                        <TextBlock Grid.Column="3"
+                                                   Text="{Binding Name}"/>
+
+                                        <Button Grid.Column="4"
+                                                Content="Add to order 🛒"
+                                                Command="{Binding DataContext.AddToOrderCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                CommandParameter="{Binding}"/>
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+
+                    <!-- ORDER LINES -->
+                    <StackPanel Grid.Row="2" Grid.ColumnSpan="2">
+                        <TextBlock Text="Order"
+                                   FontWeight="Bold"
+                                   FontSize="16"/>
+                        <ItemsControl ItemsSource="{Binding OrderLines}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="80"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+
+                                        <Button Content="Delete ❌"
+                                                Command="{Binding DataContext.RemoveFromOrderCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                CommandParameter="{Binding}"/>
+
+                                        <TextBlock Grid.Column="1"
+                                                   Text="{Binding Quantity}"
+                                                   HorizontalAlignment="Center"/>
+
+                                        <TextBlock Grid.Column="2"
+                                                   Text="{Binding Name}"/>
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+
+                    <!-- PLACE ORDER -->
+                    <Button Grid.Row="3"
+                            Grid.Column="1"
+                            Content="Place order ✅"
+                            Width="180"
+                            Height="40"
+                            HorizontalAlignment="Right"
+                            Margin="0,20,0,0"
+                            Command="{Binding DataContext.PlaceOrderCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+
+                    <TextBlock Grid.Row="4"
+                               Grid.Column="1"
+                               Foreground="Red"
+                               FontWeight="Bold"
+                               Text="You must be logged in to place an order"
+                               IsVisible="{Binding IsLoggedOut}"
+                               HorizontalAlignment="Right"/>
+                </Grid>
+            </TabItem>
+        </TabControl>
+
+        <!-- LOG -->
+        <Border Grid.Row="1"
+                BorderBrush="Black"
+                BorderThickness="0,1,0,1"
+                Background="DimGray"
+                Padding="10">
+            <ScrollViewer>
+                <TextBlock Name="LogOutput"
+                           FontFamily="Consolas"
+                           TextWrapping="Wrap"/>
+            </ScrollViewer>
+        </Border>
+
+        <!-- BOTTOM -->
+        <DockPanel Grid.Row="2" Margin="8">
+            <Button Content="Clear log"
+                    DockPanel.Dock="Left"
+                    Click="ClearLogButton_OnClick"/>
+            <Button Content="Logout"
+                    DockPanel.Dock="Right"
+                    Name="LogoutButton"
+                    IsVisible="False"
+                    Click="LogoutButton_OnClick"/>
+        </DockPanel>
+    </Grid>
+</Window>
