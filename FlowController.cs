@@ -3,11 +3,11 @@ using System.Collections.Generic;
 
 namespace Login
 {
-    /// <summary>
-    /// FlowController beskriver den overordnede proces for ordrebehandling.
-    /// Klassen er IKKE et entry point og køres ikke direkte.
-    /// Den bruges som proces-/flow-logik svarende til flowchartet.
-    /// </summary>
+    // <summary>
+    // FlowController beskriver den overordnede proces for ordrebehandling.
+    // Klassen er IKKE et entry point og køres ikke direkte.
+    // Den bruges som proces-/flow-logik svarende til flowchartet.
+    // </summary>
     public static class FlowController
     {
         public static void RunFlowExample()
@@ -86,3 +86,25 @@ namespace Login
         }
     }
 }
+
+
+// <Noter>
+//Linie 6-21
+    // Programmet starter i Main() og her defineres ordre database (orderDatabase) som en liste af lister af strings - linie 16 og ordrerne bliver lagt ind vha. AddOrderWithQty() - linie 19
+// Linie 106-142 - det er AddOrderWithQty()
+    // Den kører et loop (linie 113-132) hvor man indtaster en komponent (linie 116) og derefter indtaster et antal (linie 122).
+    // Hvis man indtaster 'done' ud for komponenten, så stopper flowet (linie 118-119).
+    // Linie 124 tester for om det er et tal og om det er større end 0.
+    // Derefter fyldes ordren med det antal af komponenter der er indtastet (f.eks. tre af komponent A) - linie 130-131
+    // Til sidst lægges ordren ind I ordre databasen.
+    // Bemærk at der laves en variabel (order i linie 108) som alle komponenterne fyldes  i - og så til sidst lægges den over i ordre databasen.
+    // Ordre databasen indeholder altid kun 1 liste og det er listen af alle komponenter.
+// Linie 25-101
+    // Her er loopet hvor komponenterne bliver "hentet" og "placeret"
+    // Den første (og eneste) ordre bliver hentet i linie 41
+    // Og den bliver fjernet fra ordre databasen I linie 42
+    // Og derefter bliver rækkefølgen lidt "omvendt" - i linie 53-66 spørger den om afhentning og placering var succesfuld.
+    // Men afhentning og placering sker først i linie 69-85
+    // I linie 69-85 løber den alle produkter/komponenter fra ordren igennem.
+    
+    
