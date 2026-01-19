@@ -1,366 +1,473 @@
-<Window xmlns="https://github.com/avaloniaui"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
-        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        xmlns:local="clr-namespace:Login"
-        x:Class="Login.MainWindow"
-        mc:Ignorable="d"
-        d:DesignWidth="1000"
-        d:DesignHeight="700"
-        d:DataContext="{d:DesignInstance Type=local:MainWindow, IsDesignTimeCreatable=True}"
-        x:CompileBindings="False"
-        Title="SystemLogin">
+using System;
+using System.Collections.ObjectModel;
+using System.ComponentModel;
+using System.Linq;
+using System.Runtime.CompilerServices;
+using System.Threading.Tasks;
+using System.Windows.Input;
+using Avalonia.Controls;
+using Avalonia.Interactivity;
+using Avalonia.Threading;
+using Microsoft.EntityFrameworkCore;
+using SystemLogin;
 
-    <!-- STYLES -->
-    <Window.Styles>
-        <Style Selector="TextBox, Button, CheckBox">
-            <Setter Property="Margin" Value="5"/>
-        </Style>
-        <Style Selector="TextBlock">
-            <Setter Property="VerticalAlignment" Value="Center"/>
-        </Style>
-    </Window.Styles>
+namespace Login;
 
-    <Grid>
-        <Grid.RowDefinitions>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="100"/>
-            <RowDefinition Height="Auto"/>
-        </Grid.RowDefinitions>
+public partial class MainWindow : Window, INotifyPropertyChanged
+{
+    private AccountService _accountService;
+    private AppDbContext _appDbContext;
+    private Account? _currentUser;
 
-        <!-- TABS -->
-        <TabControl Grid.Row="0" Name="MainTabControl">
+    public ObservableCollection<OrderViewModel> PreviousOrders { get; } = new();
+    public ObservableCollection<ProductViewModel> AvailableProducts { get; } = new();
+    public ObservableCollection<ProductViewModel> OrderLines { get; } = new();
+    
+    public ObservableCollection<OrderLine> DatabaseOrderLines { get; } = new();
+    
+    // === Viser seneste ordre i "Database"-fanen ===
+    public ObservableCollection<ProductViewModel> LastOrderProducts { get; } = new();
 
-            <!-- LOGIN -->
-            <TabItem Header="🔑 Login">
-                <StackPanel Margin="20" Spacing="20">
-                    <TextBlock Text="Login" FontWeight="Bold" FontSize="16"/>
-                    <TextBox Name="LoginUsername" Watermark="Username"/>
-                    <TextBox Name="LoginPassword" Watermark="Password" PasswordChar="●"/>
-                    <Button Content="Login" Width="160" Click="LoginButton_OnClick"/>
+    public RelayCommand ProcessOrderCommand { get; }
+    public RelayCommand ConfirmOrderCommand { get; }
 
-                    <Separator/>
+    
+    public event PropertyChangedEventHandler? PropertyChanged;
+    private void OnPropertyChanged([CallerMemberName] string? name = null)
+        => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
 
-                    <TextBlock Text="Create user" FontWeight="Bold" FontSize="16"/>
-                    <TextBox Name="CreateUserUsername" Watermark="Username"/>
-                    <TextBox Name="CreateUserPassword" Watermark="Password" PasswordChar="●"/>
+    public string CurrentUserId => _currentUser?.Username ?? "";
+    public bool IsLoggedIn => _currentUser != null;
+    public bool IsLoggedOut => _currentUser == null;
 
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="Is admin"/>
-                        <CheckBox Name="CreateUserIsAdmin"/>
-                    </StackPanel>
+    public RelayCommand<ProductViewModel> AddToOrderCommand { get; }
+    public RelayCommand<ProductViewModel> RemoveFromOrderCommand { get; }
+    public RelayCommand<ProductViewModel> IncreaseQtyCommand { get; }
+    public RelayCommand<ProductViewModel> DecreaseQtyCommand { get; }
+    public RelayCommand PlaceOrderCommand { get; }
 
-                    <Button Content="Create user ✅"
-                            Width="180"
-                            Click="CreateUserButton_OnClick"/>
-                </StackPanel>
-            </TabItem>
+    private int _selectedTabIndex;
+    public int SelectedTabIndex
+    {
+        get => _selectedTabIndex;
+        set
+        {
+            _selectedTabIndex = value;
+            OnPropertyChanged();
 
-            <!-- ADMIN -->
-            <TabItem Header="🦾 Admin">
-                <Grid Margin="20">
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="*"/>
-                        <RowDefinition Height="Auto"/>
-                    </Grid.RowDefinitions>
+            // 2 = Database-tab
+            if (_selectedTabIndex == 2)
+                LoadLatestOrderFromDatabase();
+        }
+    }
 
-                    <TextBlock Text="Previous orders"
-                               FontSize="20"
-                               FontWeight="Bold"
-                               Margin="0,0,0,16"/>
+    public MainWindow()
+    {
+        InitializeComponent();
+        DataContext = this;
 
-                    <Grid Grid.Row="1">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="100"/>
-                            <ColumnDefinition Width="150"/>
-                            <ColumnDefinition Width="100"/>
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Text="Order ID" FontWeight="Bold"/>
-                        <TextBlock Text="Date" Grid.Column="1" FontWeight="Bold"/>
-                        <TextBlock Text="Quantity" Grid.Column="2" FontWeight="Bold"/>
-                    </Grid>
+        InitializeServices();
+        Loaded += OnLoaded;
 
-                    <ItemsControl Grid.Row="2" ItemsSource="{Binding PreviousOrders}">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="100"/>
-                                        <ColumnDefinition Width="150"/>
-                                        <ColumnDefinition Width="100"/>
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock Text="{Binding OrderId}"/>
-                                    <TextBlock Text="{Binding CreatedAt}" Grid.Column="1"/>
-                                    <TextBlock Text="{Binding TotalQuantity}" Grid.Column="2"/>
-                                </Grid>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
+        IncreaseQtyCommand = new RelayCommand<ProductViewModel>(p => p.Quantity++);
+        DecreaseQtyCommand = new RelayCommand<ProductViewModel>(p =>
+        {
+            if (p.Quantity > 0)
+                p.Quantity--;
+        });
 
-                    <Button Grid.Row="3"
-                            Content="Place new order"
-                            Width="240"
-                            Height="56"
-                            HorizontalAlignment="Right"
-                            Margin="0,20,0,0"
-                            Click="OnPlaceOrderClick"/>
-                </Grid>
-            </TabItem>
+        AddToOrderCommand = new RelayCommand<ProductViewModel>(AddToOrder);
+        RemoveFromOrderCommand = new RelayCommand<ProductViewModel>(RemoveFromOrder);
+        PlaceOrderCommand = new RelayCommand(
+            PlaceOrder,
+            () => IsLoggedIn && OrderLines.Any(p => p.Quantity > 0)
+        );
 
-<!-- DATABASE -->
-<TabItem Header="🛢 Database">
-    <DockPanel Margin="20">
-
-        <!-- CONFIRM BUTTON -->
-        <Button Content="Confirm order completed"
-                DockPanel.Dock="Bottom"
-                HorizontalAlignment="Right"
-                Margin="0,20,0,0"
-                Width="200"
-                Height="32"
-                Background="Green"
-                Foreground="White"
-                Command="{Binding DataContext.ConfirmOrderCommand,
-                  RelativeSource={RelativeSource AncestorType=Window}}"/>
+        ProcessOrderCommand = new RelayCommand(OnConfirmOrderCompleted);
+        ConfirmOrderCommand = new RelayCommand(OnConfirmOrderRemoveFromDatabase);
 
 
+        AvailableProducts.Add(new ProductViewModel("Component A"));
+        AvailableProducts.Add(new ProductViewModel("Component B"));
+        AvailableProducts.Add(new ProductViewModel("Component C"));
+    }
 
-        <!-- MAIN GRID -->
-        <Grid>
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="*"/>
-            </Grid.RowDefinitions>
+    private async void OnLoaded(object? sender, RoutedEventArgs e)
+    {
+        if (await EnsureDatabaseCreatedWithExampleDataAsync())
+            Log("Database did not exist. Created a new one.");
+    }
 
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="150"/>
-                <ColumnDefinition Width="200"/>
-            </Grid.ColumnDefinitions>
+    private void InitializeServices()
+    {
+        _appDbContext?.Dispose();
+        _appDbContext = new AppDbContext();
+        _accountService = new AccountService(_appDbContext, new PasswordHasher());
+    }
 
-            <!-- ORDER HEADER -->
-            <TextBox Grid.Row="0"
-                     Grid.ColumnSpan="2"
-                     Text="Order"
-                     FontSize="17"
-                     TextAlignment="Center"
-                     Background="#FF120F75"
-                     Foreground="White"
-                     Height="32"
-                     Width="350"
-                     HorizontalAlignment="Center"
-                     Margin="0,10"/>
+    private async Task<bool> EnsureDatabaseCreatedWithExampleDataAsync()
+    {
+        var created = await _appDbContext.Database.EnsureCreatedAsync();
+        if (!created) return false;
 
-            <!-- COLUMN HEADERS -->
-            <TextBox Grid.Row="1"
-                     Grid.Column="0"
-                     Text="Quantity"
-                     TextAlignment="Center"
-                     FontWeight="Bold"
-                     Foreground="#FF04006B"
-                     Height="32"
-                     Margin="0,5"/>
+        InitializeServices();
+        await _accountService.NewAccountAsync("admin", "admin", true);
+        await _accountService.NewAccountAsync("user", "user");
+        return true;
+    }
+    private void OnDatabaseTabSelected()
+    {
+        LoadLatestOrderFromDatabase();
+    }
 
-            <TextBox Grid.Row="1"
-                     Grid.Column="1"
-                     Text="Component"
-                     TextAlignment="Center"
-                     FontWeight="Bold"
-                     Foreground="#FF04006B"
-                     Height="32"
-                     Margin="0,5"/>
+    private async void LoginButton_OnClick(object? sender, RoutedEventArgs e)
+    {
+        LoadOrdersForUser(_currentUser);
+        LoadLatestOrderFromDatabase();
+        UpdateCanExecute();
 
-            <!-- DATABASE DATA -->
-            <ItemsControl Grid.Row="2"
-                          Grid.ColumnSpan="2"
-                          ItemsSource="{Binding DatabaseOrderLines}">
-                <ItemsControl.ItemTemplate>
-                    <DataTemplate>
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="150"/>
-                                <ColumnDefinition Width="200"/>
-                            </Grid.ColumnDefinitions>
+        var username = LoginUsername.Text;
+        var password = LoginPassword.Text;
 
-                            <TextBlock Grid.Column="0"
-                                       Text="{Binding Quantity}"
-                                       TextAlignment="Center"
-                                       FontSize="14"
-                                       Height="24"/>
+        if (!await _accountService.UsernameExistsAsync(username))
+        {
+            Log("Username does not exist.");
+            return;
+        }
 
-                            <TextBlock Grid.Column="1"
-                                       Text="{Binding ProductName}"
-                                       TextAlignment="Center"
-                                       FontSize="14"
-                                       Height="24"/>
-                        </Grid>
-                    </DataTemplate>
-                </ItemsControl.ItemTemplate>
-            </ItemsControl>
-            <Button Grid.Row="3"
-                    Grid.Column="0"
-                    Content="Process order"
-                    Width="140"
-                    Height="32"
-                    Background="#1E60FF"
-                    Foreground="White"
-                    Margin="0,20,0,0"
-                    HorizontalAlignment="Left"
-                    Command="{Binding DataContext.ProcessOrderCommand,
-                          RelativeSource={RelativeSource AncestorType=Window}}"/>
+        if (!await _accountService.CredentialsCorrectAsync(username, password))
+        {
+            Log("Password wrong.");
+            return;
+        }
+
+        _currentUser = await _accountService.GetAccountAsync(username);
+        LogoutButton.IsVisible = true;
+
+        Log($"{_currentUser.Username} logged in.");
+
+        LoginUsername.Text = "";
+        LoginPassword.Text = "";
+
+        OnPropertyChanged(nameof(IsLoggedIn));
+        OnPropertyChanged(nameof(IsLoggedOut));
+        OnPropertyChanged(nameof(CurrentUserId));
+        UpdateCanExecute();
+
+
+        LoadOrdersForUser(_currentUser);
+        UpdateCanExecute();
+    }
+
+    private void LogoutButton_OnClick(object? sender, RoutedEventArgs e)
+    {
+        _currentUser = null;
+        PreviousOrders.Clear();
+        LogoutButton.IsVisible = false;
+
+        OnPropertyChanged(nameof(IsLoggedIn));
+        OnPropertyChanged(nameof(IsLoggedOut));
+        OnPropertyChanged(nameof(CurrentUserId));
+
+        Log("Logged out.");
+        UpdateCanExecute();
+    }
+
+    private void OnGoToLoginClick(object? sender, RoutedEventArgs e)
+    {
+        SelectedTabIndex = 0;
+    }
+
+    private void AddToOrder(ProductViewModel product)
+    {
+        if (product.Quantity <= 0) return;
+
+        OrderLines.Add(new ProductViewModel(product.Name, product.Quantity));
+        product.Quantity = 0;
+
+        UpdateCanExecute();
+    }
+
+    private void RemoveFromOrder(ProductViewModel product)
+    {
+        OrderLines.Remove(product);
+        UpdateCanExecute();
+    }
+
+    private async void PlaceOrder()
+    {
+        if (_currentUser == null || !OrderLines.Any())
+        {
+            Log("You must be logged in and have items in the cart.");
+            return;
+        }
+
+        var order = new Order
+        {
+            AccountUsername = _currentUser.Username,
+            CreatedAt = DateTime.Now,
+            OrderLines = OrderLines.Select(p => new OrderLine
+            {
+                ProductName = p.Name,
+                Quantity = p.Quantity
+            }).ToList()
+        };
+
+
+        _appDbContext.Orders.Add(order);
+        await _appDbContext.SaveChangesAsync();
+        LoadLatestOrderFromDatabase();
+
+        Log("Order placed and saved to database.");
+        foreach (var line in order.OrderLines)
+            Log($" - {line.ProductName} x{line.Quantity}");
+
+        // Overfør til databasen-fanen
+        LastOrderProducts.Clear();
+        foreach (var item in OrderLines)
+            LastOrderProducts.Add(new ProductViewModel(item.Name, item.Quantity));
+
+        // Ryd kurven
+        OrderLines.Clear();
+
+        // Genindlæs ordrer
+        LoadOrdersForUser(_currentUser);
+
+        // Skift til "Database"-fanen
+        SelectedTabIndex = 2;
+
+        UpdateCanExecute();
+    }
+
+    private void LoadLatestOrderFromDatabase()
+    {
+        DatabaseOrderLines.Clear();
+
+        var order = _appDbContext.Orders
+            .Include(o => o.OrderLines)
+            .OrderByDescending(o => o.CreatedAt)
+            .FirstOrDefault();
+
+        if (order == null)
+            return;
+
+        foreach (var line in order.OrderLines)
+        {
+            DatabaseOrderLines.Add(line);
+        }
+    }
+
+    private void LoadOrdersForUser(Account user)
+    {
+        if (user == null || string.IsNullOrEmpty(user.Username))
+            return;
+
+        PreviousOrders.Clear();
+
+        var orders = _appDbContext.Orders
+            .Where(o => o.AccountUsername == user.Username)
+            .Include(o => o.OrderLines)
+            .OrderByDescending(o => o.CreatedAt)
+            .ToList();
+
+        foreach (var order in orders)
+        {
+            PreviousOrders.Add(new OrderViewModel
+            {
+                OrderId = order.Id,
+                CreatedAt = order.CreatedAt.ToShortDateString(),
+                TotalQuantity = order.OrderLines.Sum(l => l.Quantity)
+            });
+        }
+    }
+
+    private void CreateUserButton_OnClick(object? sender, RoutedEventArgs e)
+    {
+        var username = CreateUserUsername.Text;
+        var password = CreateUserPassword.Text;
+        var isAdmin = CreateUserIsAdmin.IsChecked ?? false;
+
+        if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password))
+        {
+            Log("Username and password are required.");
+            return;
+        }
+
+        if (_accountService.UsernameExistsAsync(username).Result)
+        {
+            Log("Username already exists.");
+            return;
+        }
+
+        _accountService.NewAccountAsync(username, password, isAdmin).Wait();
+        Log($"User '{username}' created (Admin: {isAdmin})");
+
+        CreateUserUsername.Text = "";
+        CreateUserPassword.Text = "";
+        CreateUserIsAdmin.IsChecked = false;
+    }
+    private void OnConfirmOrderCompleted()
+    {
+        Task.Run(() =>
+        {
+            int a = DatabaseOrderLines.Where(x => x.ProductName == "Component A").Sum(x => x.Quantity);
+            int b = DatabaseOrderLines.Where(x => x.ProductName == "Component B").Sum(x => x.Quantity);
+            int c = DatabaseOrderLines.Where(x => x.ProductName == "Component C").Sum(x => x.Quantity);
+
+            RobotConnectionTest.RunOrder(a, b, c);
+        });
+
+        Log("Order sent to robot (one combined program)...");
+        
+        
+    }
+    private async void OnConfirmOrderRemoveFromDatabase()
+    {
+        var latestOrder = await _appDbContext.Orders
+            .Include(o => o.OrderLines)
+            .OrderByDescending(o => o.CreatedAt)
+            .FirstOrDefaultAsync();
+
+        if (latestOrder == null)
+        {
+            Log("No order to remove.");
+            return;
+        }
+
+        _appDbContext.OrderLines.RemoveRange(latestOrder.OrderLines);
+        _appDbContext.Orders.Remove(latestOrder);
+        await _appDbContext.SaveChangesAsync();
+        
+        // ✅ UI-opdatering på UI-thread
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            DatabaseOrderLines.Clear(); // fjerner fra grid med det samme
+            LoadOrdersForUser(_currentUser); // opdater “Previous orders”
+        });
             
-        </Grid>
-    </DockPanel>
-</TabItem>
+       
+        Log("Latest order removed from database.");
+    }
 
 
-                                 <!-- CREATE ORDER -->
-            <TabItem Header="📝 Create Order">
-                <Grid Margin="20">
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="*"/>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
-                    </Grid.RowDefinitions>
 
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="2*"/>
-                        <ColumnDefinition Width="3*"/>
-                    </Grid.ColumnDefinitions>
+    private void RecreateDatabaseButton_OnClick(object? sender, RoutedEventArgs e)
+    {
+        _ = _appDbContext.Database.EnsureDeletedAsync();
+        _ = EnsureDatabaseCreatedWithExampleDataAsync();
+        Log("Database recreated.");
+    }
 
-                    <!-- USER INFO -->
-                    <StackPanel Grid.Row="0" Grid.Column="0">
-                        <TextBlock Text="Your information"
-                                   FontWeight="Bold"
-                                   FontSize="16"/>
-                        <StackPanel IsVisible="{Binding IsLoggedIn}">
-                            <TextBlock Text="Admin ID #"/>
-                            <TextBlock Text="{Binding CurrentUserId}"/>
-                        </StackPanel>
-                    </StackPanel>
+    private void OnPlaceOrderClick(object? sender, RoutedEventArgs e)
+    {
+        Log("Opened new order page.");
+        SelectedTabIndex = 3;
+    }
 
-                    <!-- PRODUCTS -->
-                    <StackPanel Grid.Row="0" Grid.Column="1">
-                        <TextBlock Text="Products"
-                                   FontWeight="Bold"
-                                   FontSize="16"/>
-                        <ItemsControl ItemsSource="{Binding AvailableProducts}">
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate>
-                                    <Grid>
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="Auto"/>
-                                            <ColumnDefinition Width="Auto"/>
-                                            <ColumnDefinition Width="40"/>
-                                            <ColumnDefinition Width="*"/>
-                                            <ColumnDefinition Width="Auto"/>
-                                        </Grid.ColumnDefinitions>
+    private void ClearLogButton_OnClick(object? sender, RoutedEventArgs e)
+    {
+        LogOutput.Text = "";
+    }
 
-                                        <Button Content="▼"
-                                                Command="{Binding DataContext.DecreaseQtyCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                CommandParameter="{Binding}"/>
+    private void UpdateCanExecute()
+    {
+        PlaceOrderCommand?.RaiseCanExecuteChanged();
+    }
 
-                                        <Button Content="▲"
-                                                Grid.Column="1"
-                                                Command="{Binding DataContext.IncreaseQtyCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                CommandParameter="{Binding}"/>
+    private void OnButtonClick(object? sender, RoutedEventArgs e)
+    {
+        Console.WriteLine("Process order button clicked.");
+    }
 
-                                        <TextBlock Grid.Column="2"
-                                                   Text="{Binding Quantity}"
-                                                   HorizontalAlignment="Center"/>
+    private void Log(string message)
+    {
+        LogOutput.Text += $"{DateTime.Now:HH:mm:ss} | {message}\n";
+    }
+}
 
-                                        <TextBlock Grid.Column="3"
-                                                   Text="{Binding Name}"/>
+// === ViewModels ===
 
-                                        <Button Grid.Column="4"
-                                                Content="Add to order 🛒"
-                                                Command="{Binding DataContext.AddToOrderCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                CommandParameter="{Binding}"/>
-                                    </Grid>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </StackPanel>
+public class OrderViewModel
+{
+    public int OrderId { get; set; }
+    public string CreatedAt { get; set; } = "";
+    public int TotalQuantity { get; set; }
+}
 
-                    <!-- ORDER LINES -->
-                    <StackPanel Grid.Row="2" Grid.ColumnSpan="2">
-                        <TextBlock Text="Order"
-                                   FontWeight="Bold"
-                                   FontSize="16"/>
-                        <ItemsControl ItemsSource="{Binding OrderLines}">
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate>
-                                    <Grid>
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="Auto"/>
-                                            <ColumnDefinition Width="80"/>
-                                            <ColumnDefinition Width="*"/>
-                                        </Grid.ColumnDefinitions>
+public class ProductViewModel : INotifyPropertyChanged
+{
+    public string Name { get; }
 
-                                        <Button Content="Delete ❌"
-                                                Command="{Binding DataContext.RemoveFromOrderCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                CommandParameter="{Binding}"/>
+    private int _quantity;
+    public int Quantity
+    {
+        get => _quantity;
+        set
+        {
+            if (_quantity != value)
+            {
+                _quantity = value;
+                OnPropertyChanged();
+            }
+        }
+    }
 
-                                        <TextBlock Grid.Column="1"
-                                                   Text="{Binding Quantity}"
-                                                   HorizontalAlignment="Center"/>
+    public ProductViewModel(string name, int quantity = 0)
+    {
+        Name = name;
+        Quantity = quantity;
+    }
 
-                                        <TextBlock Grid.Column="2"
-                                                   Text="{Binding Name}"/>
-                                    </Grid>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </StackPanel>
+    public event PropertyChangedEventHandler? PropertyChanged;
+    private void OnPropertyChanged([CallerMemberName] string? name = null)
+        => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+}
 
-                    <!-- PLACE ORDER -->
-                    <Button Grid.Row="3"
-                            Grid.Column="1"
-                            Content="Place order ✅"
-                            Width="180"
-                            Height="40"
-                            HorizontalAlignment="Right"
-                            Margin="0,20,0,0"
-                            Command="{Binding DataContext.PlaceOrderCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+// === RelayCommand classes ===
 
-                    <TextBlock Grid.Row="4"
-                               Grid.Column="1"
-                               Foreground="Red"
-                               FontWeight="Bold"
-                               Text="You must be logged in to place an order"
-                               IsVisible="{Binding IsLoggedOut}"
-                               HorizontalAlignment="Right"/>
-                </Grid>
-            </TabItem>
-        </TabControl>
+public class RelayCommand : ICommand
+{
+    private readonly Action _execute;
+    private readonly Func<bool>? _canExecute;
 
-        <!-- LOG -->
-        <Border Grid.Row="1"
-                BorderBrush="Black"
-                BorderThickness="0,1,0,1"
-                Background="DimGray"
-                Padding="10">
-            <ScrollViewer>
-                <TextBlock Name="LogOutput"
-                           FontFamily="Consolas"
-                           TextWrapping="Wrap"/>
-            </ScrollViewer>
-        </Border>
+    public RelayCommand(Action execute, Func<bool>? canExecute = null)
+    {
+        _execute = execute;
+        _canExecute = canExecute;
+    }
 
-        <!-- BOTTOM -->
-        <DockPanel Grid.Row="2" Margin="8">
-            <Button Content="Clear log"
-                    DockPanel.Dock="Left"
-                    Click="ClearLogButton_OnClick"/>
-            <Button Content="Logout"
-                    DockPanel.Dock="Right"
-                    Name="LogoutButton"
-                    IsVisible="False"
-                    Click="LogoutButton_OnClick"/>
-        </DockPanel>
-    </Grid>
-</Window>
+    public event EventHandler? CanExecuteChanged;
+    public bool CanExecute(object? parameter) => _canExecute == null || _canExecute();
+    public void Execute(object? parameter) => _execute();
+
+    public void RaiseCanExecuteChanged()
+    {
+        CanExecuteChanged?.Invoke(this, EventArgs.Empty);
+    }
+}
+
+public class RelayCommand<T> : ICommand
+{
+    private readonly Action<T> _execute;
+    private readonly Func<T, bool>? _canExecute;
+
+    public RelayCommand(Action<T> execute, Func<T, bool>? canExecute = null)
+    {
+        _execute = execute;
+        _canExecute = canExecute;
+    }
+
+    public event EventHandler? CanExecuteChanged;
+    public bool CanExecute(object? parameter) => _canExecute == null || parameter is T;
+
+    public void Execute(object? parameter)
+    {
+        if (parameter is T value)
+            _execute(value);
+    }
+
+    public void RaiseCanExecuteChanged()
+    {
+        CanExecuteChanged?.Invoke(this, EventArgs.Empty); 
+    }
+    }
