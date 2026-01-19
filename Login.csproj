@@ -1,4 +1,7 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<!-- Login.csproj is everything that needs to be established for the program to run and it defines how the application is built. -->
+
+<!-- Tells the computer that .NET is the used platform to run the app. -->
+<Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
         <OutputType>WinExe</OutputType>
         <TargetFramework>net9.0</TargetFramework>
@@ -8,6 +11,7 @@
         <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     </PropertyGroup>
 
+    <!-- This is a list of the tool and libraries the app needs. -->
     <ItemGroup>
         <PackageReference Include="Avalonia" Version="11.3.6"/>
         <PackageReference Include="Avalonia.Desktop" Version="11.3.6"/>
@@ -22,8 +26,10 @@
         <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="9.0.11" />
     </ItemGroup>
 
+    <!-- Lists additional files to be included in the project. -->
     <ItemGroup>
       <Content Include="SystemLogin.csproj" />
       <Content Include="SystemLogin.sln" />
     </ItemGroup>
 </Project>
+
