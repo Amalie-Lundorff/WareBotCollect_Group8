@@ -243,14 +243,18 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         UpdateCanExecute();
     }
 
+    // === Place order button === 
     private async void PlaceOrder()
     {
+        // === Stop if the user is not logged in or the cart is empty ===
         if (_currentUser == null || !OrderLines.Any())
         {
+            // === Message if above is true ===
             Log("You must be logged in and have items in the cart.");
             return;
         }
 
+        // === Creates the order. Stores the admin, time and quantity ===
         var order = new Order
         {
             AccountUsername = _currentUser.Username,
@@ -262,63 +266,74 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             }).ToList()
         };
 
-
+        // === save the order in the database and show the latest order ===
         _appDbContext.Orders.Add(order);
         await _appDbContext.SaveChangesAsync();
         LoadLatestOrderFromDatabase();
 
+        // === Displays each product ordered === 
         Log("Order placed and saved to database.");
         foreach (var line in order.OrderLines)
             Log($" - {line.ProductName} x{line.Quantity}");
 
-        // Overfør til databasen-fanen
+        // Transfer the order to the database tab ===
         LastOrderProducts.Clear();
         foreach (var item in OrderLines)
             LastOrderProducts.Add(new ProductViewModel(item.Name, item.Quantity));
 
-        // Ryd kurven
+        // === Empties the order === 
         OrderLines.Clear();
 
-        // Genindlæs ordrer
+        // === Reload the order history === 
         LoadOrdersForUser(_currentUser);
 
-        // Skift til "Database"-fanen
+        // === Change to the database tab ===
         SelectedTabIndex = 2;
 
         UpdateCanExecute();
     }
 
+    // === Show the latest order === 
     private void LoadLatestOrderFromDatabase()
     {
+        // === Remove what was shown before === 
         DatabaseOrderLines.Clear();
 
+        // === Finding the latest order === 
         var order = _appDbContext.Orders
             .Include(o => o.OrderLines)
             .OrderByDescending(o => o.CreatedAt)
             .FirstOrDefault();
 
+        // === Stop if there are no orders == 
         if (order == null)
             return;
 
+        // == Show all the products in the order === 
         foreach (var line in order.OrderLines)
         {
             DatabaseOrderLines.Add(line);
         }
     }
 
+    // === Previous orders ===
     private void LoadOrdersForUser(Account user)
     {
+        // === Check if anyone is logged in or the username is empty ===
         if (user == null || string.IsNullOrEmpty(user.Username))
             return;
 
+        // === Removes orders from other users === 
         PreviousOrders.Clear();
 
+        // === Finding all the orders for this user and shows the newest in the top === 
         var orders = _appDbContext.Orders
             .Where(o => o.AccountUsername == user.Username)
             .Include(o => o.OrderLines)
             .OrderByDescending(o => o.CreatedAt)
             .ToList();
 
+        // === For all orders, a summary incl. order number, date and quantity is shown === 
         foreach (var order in orders)
         {
             PreviousOrders.Add(new OrderViewModel
@@ -330,71 +345,88 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
+    // === Create user ===
     private void CreateUserButton_OnClick(object? sender, RoutedEventArgs e)
     {
+        // === Read the username, password and if the user is admin === 
         var username = CreateUserUsername.Text;
         var password = CreateUserPassword.Text;
         var isAdmin = CreateUserIsAdmin.IsChecked ?? false;
 
+        // === Stop if the username or the password is not written ===
         if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password))
         {
+            // === Message ===
             Log("Username and password are required.");
             return;
         }
 
+        // === Check if other has this username ===
         if (_accountService.UsernameExistsAsync(username).Result)
         {
+            // === Message ===
             Log("Username already exists.");
             return;
         }
 
+        // === Refister the new user in the database ===
         _accountService.NewAccountAsync(username, password, isAdmin).Wait();
+        // === Message ===
         Log($"User '{username}' created (Admin: {isAdmin})");
 
+        // === Clear the fields ===
         CreateUserUsername.Text = "";
         CreateUserPassword.Text = "";
         CreateUserIsAdmin.IsChecked = false;
     }
+
+    // === Admin confirms order is completed ===
     private void OnConfirmOrderCompleted()
     {
         Task.Run(() =>
         {
+            // === Add up how many components the order contains in total ===
             int a = DatabaseOrderLines.Where(x => x.ProductName == "Component A").Sum(x => x.Quantity);
             int b = DatabaseOrderLines.Where(x => x.ProductName == "Component B").Sum(x => x.Quantity);
             int c = DatabaseOrderLines.Where(x => x.ProductName == "Component C").Sum(x => x.Quantity);
 
+            // === Send to robot === 
             RobotConnectionTest.RunOrder(a, b, c);
         });
 
+        // === Message ===
         Log("Order sent to robot (one combined program)...");
-        
-        
     }
+
+    // === When the robot has finished the order ===
     private async void OnConfirmOrderRemoveFromDatabase()
     {
+        // === Find the latest order in the database === 
         var latestOrder = await _appDbContext.Orders
             .Include(o => o.OrderLines)
             .OrderByDescending(o => o.CreatedAt)
             .FirstOrDefaultAsync();
 
+        // === Show message if there are no orders ===
         if (latestOrder == null)
         {
             Log("No order to remove.");
             return;
         }
 
+        // === Remove all products in the order, deleting the order and removes the order from the database tab ===
         _appDbContext.OrderLines.RemoveRange(latestOrder.OrderLines);
         _appDbContext.Orders.Remove(latestOrder);
         await _appDbContext.SaveChangesAsync();
-        
-        // ✅ UI-opdatering på UI-thread
+
+        // === Updates the display === 
         await Dispatcher.UIThread.InvokeAsync(() =>
         {
-            DatabaseOrderLines.Clear(); // fjerner fra grid med det samme
-            LoadOrdersForUser(_currentUser); // opdater “Previous orders”
+            DatabaseOrderLines.Clear(); 
+            LoadOrdersForUser(_currentUser);
         });
             
-       
+       // === Message ===
         Log("Latest order removed from database.");
     }
 
@@ -407,35 +439,40 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         Log("Database recreated.");
     }
 
+    // === Recreate database button by deleting and creating a new database ===
     private void OnPlaceOrderClick(object? sender, RoutedEventArgs e)
     {
         Log("Opened new order page.");
         SelectedTabIndex = 3;
     }
 
+    // === Clear log button ===
     private void ClearLogButton_OnClick(object? sender, RoutedEventArgs e)
     {
         LogOutput.Text = "";
     }
 
+    // === Place order button ===
     private void UpdateCanExecute()
     {
         PlaceOrderCommand?.RaiseCanExecuteChanged();
     }
 
+    // === When clicking a button === 
     private void OnButtonClick(object? sender, RoutedEventArgs e)
     {
         Console.WriteLine("Process order button clicked.");
     }
 
+    // === Messages in the log ===
     private void Log(string message)
     {
         LogOutput.Text += $"{DateTime.Now:HH:mm:ss} | {message}\n";
     }
 }
 
-// === ViewModels ===
 
+// === Viewmodel ===
 public class OrderViewModel
 {
     public int OrderId { get; set; }
@@ -443,6 +480,7 @@ public class OrderViewModel
     public int TotalQuantity { get; set; }
 }
 
+// === Updating the number displayed when a value is changed ===
 public class ProductViewModel : INotifyPropertyChanged
 {
     public string Name { get; }
@@ -461,19 +499,20 @@ public class ProductViewModel : INotifyPropertyChanged
         }
     }
 
+    // === Project view model ===
     public ProductViewModel(string name, int quantity = 0)
     {
         Name = name;
         Quantity = quantity;
     }
 
+    // == Automatically updates the screen ===
     public event PropertyChangedEventHandler? PropertyChanged;
     private void OnPropertyChanged([CallerMemberName] string? name = null)
         => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
 }
 
-// === RelayCommand classes ===
-
+// === Connects the buttons to their actions ===
 public class RelayCommand : ICommand
 {
     private readonly Action _execute;
@@ -495,6 +534,7 @@ public class RelayCommand : ICommand
     }
 }
 
+// === Actions for pressing the buttons so the program know which item to action on ===
 public class RelayCommand<T> : ICommand
 {
     private readonly Action<T> _execute;
@@ -521,3 +561,4 @@ public class RelayCommand<T> : ICommand
     }
 
     }
+
