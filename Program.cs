@@ -1,21 +1,23 @@
-﻿using Avalonia;
+// Program.cs starts the application.
+using Avalonia;
 using System;
 
 namespace SystemLogin;
 
+// Starts the program.
 class Program
 {
-    // Initialization code. Don't use any Avalonia, third-party APIs or any
-    // SynchronizationContext-reliant code before AppMain is called: things aren't initialized
-    // yet and stuff might break.
+    // Running the program for Windows.
     [STAThread]
+    // Main method and the program starts here. Start the avalonia application.
     public static void Main(string[] args) => BuildAvaloniaApp()
         .StartWithClassicDesktopLifetime(args);
-
-    // Avalonia configuration, don't remove; also used by visual designer.
+    
+    // Method for preparing the avalonia before the app starts.
     public static AppBuilder BuildAvaloniaApp()
         => AppBuilder.Configure<App>()
             .UsePlatformDetect()
             .WithInterFont()
             .LogToTrace();
+
 }
