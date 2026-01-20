@@ -1,10 +1,3 @@
-// === MainWindow.axaml.cs controls how the program behaves === 
-/* 
-This includes:
-logging in, creating admin users, showing previous orders,
-placing irders, saving orders and  sending order to the robot
-*/ 
-
 using System;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
@@ -20,241 +13,272 @@ using SystemLogin;
 
 namespace Login;
 
-// === This controls the main window that the user sees ===
+// MainWindow er code-behind til MainWindow.axaml.
+// INotifyPropertyChanged bruges til databinding, så GUI opdateres automatisk.
+// RelayCommand er en måde at forbinde en knap i GUI med en metode i koden – uden at bruge Click-events. Indeholder: Hvad skal køres + må det køres..
 public partial class MainWindow : Window, INotifyPropertyChanged
 {
-    // === This handles the log in and users, the link to the database and the data of the logged in user ===
+    // Service til login og brugerhåndtering
     private AccountService _accountService;
+    // Database-kontekst (Entity Framework)
     private AppDbContext _appDbContext;
+    // Den aktuelt loggede bruger (null hvis ingen er logget ind)
     private Account? _currentUser;
 
-    // === Automatically updates the lists shown ===. 
+    // Viser tidligere ordrer i Admin-fanen
     public ObservableCollection<OrderViewModel> PreviousOrders { get; } = new();
+    // Viser tilgængelige produkter i Create Order
     public ObservableCollection<ProductViewModel> AvailableProducts { get; } = new();
+    // Viser produkter i den aktuelle ordre (kurv)
     public ObservableCollection<ProductViewModel> OrderLines { get; } = new();
+    // Viser ordrelinjer i Database-fanen
     public ObservableCollection<OrderLine> DatabaseOrderLines { get; } = new();
+    // Bruges til at vise seneste ordre i Database-fanen
     public ObservableCollection<ProductViewModel> LastOrderProducts { get; } = new();
 
-    // === Links the buttons to their actions === 
+    // Starter behandling af ordren (fx robot)
     public RelayCommand ProcessOrderCommand { get; }
+    // Fjerner seneste ordre fra databasen
     public RelayCommand ConfirmOrderCommand { get; }
 
-    // === Automatically updates the values shown ===
+    // Event der bruges til at opdatere UI, når properties ændres
     public event PropertyChangedEventHandler? PropertyChanged;
+    // Kaldes når en property ændres
     private void OnPropertyChanged([CallerMemberName] string? name = null)
         => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
 
-    // === If the user is logged in or out and some actions are available === 
+    // Viser brugerens ID i UI
     public string CurrentUserId => _currentUser?.Username ?? "";
+    
+    // Bruges til at vise/skjule UI-elementer
     public bool IsLoggedIn => _currentUser != null;
     public bool IsLoggedOut => _currentUser == null;
 
-    // === Links the buttons to their actions ===
+    // Tilføjer produkt til ordren
     public RelayCommand<ProductViewModel> AddToOrderCommand { get; }
+    // Fjerner produkt fra ordren
     public RelayCommand<ProductViewModel> RemoveFromOrderCommand { get; }
+    // Øger mængde på produkt
     public RelayCommand<ProductViewModel> IncreaseQtyCommand { get; }
+    // Mindsker mængde på produkt
     public RelayCommand<ProductViewModel> DecreaseQtyCommand { get; }
+    // Afsender ordren
     public RelayCommand PlaceOrderCommand { get; }
 
-    // === Controls the active tab which is open, so the program knows what to display === 
+    // Holder styr på hvilken fane der er valgt
     private int _selectedTabIndex;
+    // Når Database-fanen vælges, indlæses seneste ordre
     public int SelectedTabIndex
     {
+        // Returnerer den aktuelt valgte fane
         get => _selectedTabIndex;
+        // Kører hver gang brugeren skifter fane
         set
         {
+            // Opdaterer intern variabel med ny fane
             _selectedTabIndex = value;
+            // Giver besked til UI om at værdien er ændret
+            // (opdaterer databinding)
             OnPropertyChanged();
 
-            // 2 = Database-tab
+            // Tjekker om Database-fanen er valgt
+            // 2 svarer til Database-tab i TabControl
             if (_selectedTabIndex == 2)
+                // Indlæser den seneste ordre fra databasen
                 LoadLatestOrderFromDatabase();
         }
     }
 
-    // === This will run when opening the program === 
+    // Initialiserer UI, services, commands og standarddata
     public MainWindow()
     {
-        // === Reads the design from the MainWindow.axaml === 
         InitializeComponent();
+        // Gør denne klasse til DataContext for XAML
         DataContext = this;
-        
-        // === Makes the system ready to working ===
+
+        // Initialiserer services og database
         InitializeServices();
+        // Kører når vinduet er loadet
         Loaded += OnLoaded;
 
-        // === When adding/removing a product, the quantity changes. But never below 0 ===
+        // Commands til ændring af mængder
+        // Command til at øge mængden af et produkt med 1
         IncreaseQtyCommand = new RelayCommand<ProductViewModel>(p => p.Quantity++);
+        // Command til at mindske mængden af et produkt
+        // Forhindrer at mængden bliver negativ
         DecreaseQtyCommand = new RelayCommand<ProductViewModel>(p =>
         {
             if (p.Quantity > 0)
                 p.Quantity--;
         });
 
-        // === Adding and deleting from the order === 
-        AddToOrderCommand = new RelayCommand<ProductViewModel>(AddToOrder);
-        RemoveFromOrderCommand = new RelayCommand<ProductViewModel>(RemoveFromOrder);
-
-        // === The place order only works if the user is logged in and there is items in the order === 
+        // Command til at tilføje et produkt til ordren (kurven)
+        AddToOrderCommand = new RelayCommand<ProductViewModel>(AddToOrder); // Command til at tilføje et produkt til ordren (kurven)
+        RemoveFromOrderCommand = new RelayCommand<ProductViewModel>(RemoveFromOrder); // Command til at fjerne et produkt fra ordren
+        // Command til at afsende ordren
+        // Kan kun køres hvis brugeren er logget ind
+        // og der findes mindst ét produkt med mængde > 0
         PlaceOrderCommand = new RelayCommand(
             PlaceOrder,
             () => IsLoggedIn && OrderLines.Any(p => p.Quantity > 0)
         );
 
-        // === Sends the order to the robot and deletes the order from the database ===
+        // Commands til database og robot
         ProcessOrderCommand = new RelayCommand(OnConfirmOrderCompleted);
         ConfirmOrderCommand = new RelayCommand(OnConfirmOrderRemoveFromDatabase);
 
-        // === Available products the admin can order ===
+        // Opretter standardprodukter
         AvailableProducts.Add(new ProductViewModel("Component A"));
         AvailableProducts.Add(new ProductViewModel("Component B"));
         AvailableProducts.Add(new ProductViewModel("Component C"));
     }
 
-    // === When the window opens, it check if the database exists === 
+    // Kører ved opstart og opretter databasen hvis den ikke findes
     private async void OnLoaded(object? sender, RoutedEventArgs e)
     {
-        // === if the database does not exists, it is created ===
         if (await EnsureDatabaseCreatedWithExampleDataAsync())
             Log("Database did not exist. Created a new one.");
     }
 
-    // === Initial actions to prepare the systems that the program needs to work ===
+    // Initialiserer database og account-service
     private void InitializeServices()
     {
-        // === Close old database connection === 
+        // Lukker evt. eksisterende database-forbindelse
         _appDbContext?.Dispose();
-        // === Create new database connection === 
+        // Opretter ny database-kontekst
         _appDbContext = new AppDbContext();
-        // === Create the log in system === 
+        // Opretter service til login og brugerstyring
         _accountService = new AccountService(_appDbContext, new PasswordHasher());
     }
-
-    // === The database acts whether it exists or not ===  
+    
+    // Sikrer at databasen findes og opretter eksempelbrugere
     private async Task<bool> EnsureDatabaseCreatedWithExampleDataAsync()
     {
-        // === Check if the database exists. If not, create it and if yes, do nothing ===
+        // Opretter databasen hvis den ikke findes
         var created = await _appDbContext.Database.EnsureCreatedAsync();
+        // Hvis databasen allerede fandtes, stoppes metoden
         if (!created) return false;
 
-        // === Establishes a new database so the admin or other users can log in ===
+        // Geninitialiserer services efter database-oprettelse
         InitializeServices();
+        // Opretter standard admin-bruger
         await _accountService.NewAccountAsync("admin", "admin", true);
+        // Opretter standard normal bruger
         await _accountService.NewAccountAsync("user", "user");
+        // Returnerer true hvis databasen blev oprettet
         return true;
     }
-
-    // === Load the latest orders, when the database tab is selected === 
+    // Kaldes når Database-fanen vælges
     private void OnDatabaseTabSelected()
     {
+        // Indlæser den seneste ordre fra databasen
         LoadLatestOrderFromDatabase();
     }
     
-    // === Log in === 
+    // Logger brugeren ind og opdaterer UI
     private async void LoginButton_OnClick(object? sender, RoutedEventArgs e)
-    { 
+    {
+        // Indlæser evt. tidligere ordrer (sikkerhedsopdatering)
         LoadOrdersForUser(_currentUser);
+
+        // Indlæser seneste ordre til Database-fanen
         LoadLatestOrderFromDatabase();
+
+        // Opdaterer om knapper må bruges (CanExecute)
         UpdateCanExecute();
 
-        // === Reads the username and password === 
+        // Henter brugernavn og adgangskode fra inputfelter
         var username = LoginUsername.Text;
         var password = LoginPassword.Text;
 
-        // === Check if the username exist in the database. If not, show message ===
+        // Tjekker om brugernavnet findes i databasen
         if (!await _accountService.UsernameExistsAsync(username))
         {
+            // Skriver fejl i loggen og stopper login
             Log("Username does not exist.");
             return;
         }
-
-        // === Check if the password is correct for the user. If not, show message === 
+        // Tjekker om adgangskoden er korrekt
         if (!await _accountService.CredentialsCorrectAsync(username, password))
         {
+            // Skriver fejl i loggen og stopper login
             Log("Password wrong.");
             return;
         }
-        
-        // === Get the user from the database and store them as the current user === 
+
+        // Henter brugeren fra databasen og sætter som aktiv bruger
         _currentUser = await _accountService.GetAccountAsync(username);
 
-        // === Show log out button as the user is logged in === 
+        // Viser logout-knappen
         LogoutButton.IsVisible = true;
 
-        // === Shows the username that is logged in === 
+        // Skriver login-besked i loggen
         Log($"{_currentUser.Username} logged in.");
 
-        // === Removes the text in the log in ===
+        // Rydder inputfelter efter login
         LoginUsername.Text = "";
         LoginPassword.Text = "";
 
-        // === Update the display when the log in is complete (buttons, text) ===
+        // Opdaterer UI så elementer reagerer på login-status
         OnPropertyChanged(nameof(IsLoggedIn));
         OnPropertyChanged(nameof(IsLoggedOut));
         OnPropertyChanged(nameof(CurrentUserId));
+
+        // Opdaterer hvilke commands der er aktive
         UpdateCanExecute();
 
-        // === Load and display the previous orders made === 
+        // Indlæser brugerens ordrer efter login
         LoadOrdersForUser(_currentUser);
+
+        // Opdaterer commands igen efter dataændringer
         UpdateCanExecute();
     }
 
-    // === Log out ===
+
+    // Logger brugeren ud og rydder data
     private void LogoutButton_OnClick(object? sender, RoutedEventArgs e)
     {
-        // === Program forgets the user, does not show information for the user and remvoes the log out button === 
         _currentUser = null;
         PreviousOrders.Clear();
         LogoutButton.IsVisible = false;
 
-        // === Update the display when the log out is complete (buttons, text) ===
         OnPropertyChanged(nameof(IsLoggedIn));
         OnPropertyChanged(nameof(IsLoggedOut));
         OnPropertyChanged(nameof(CurrentUserId));
 
-        // === Show message === 
         Log("Logged out.");
         UpdateCanExecute();
     }
 
-    // === Go to log in tab === 
     private void OnGoToLoginClick(object? sender, RoutedEventArgs e)
     {
         SelectedTabIndex = 0;
     }
 
-    // === Add products to the order === 
     private void AddToOrder(ProductViewModel product)
     {
-        // === Cannot go below 0 ===
         if (product.Quantity <= 0) return;
 
-        // === Add the products to the order === 
         OrderLines.Add(new ProductViewModel(product.Name, product.Quantity));
         product.Quantity = 0;
-    
+
         UpdateCanExecute();
     }
 
-    // === Remove items from the order === 
     private void RemoveFromOrder(ProductViewModel product)
     {
         OrderLines.Remove(product);
         UpdateCanExecute();
     }
 
-    // === Place order button === 
     private async void PlaceOrder()
     {
-        // === Stop if the user is not logged in or the cart is empty ===
         if (_currentUser == null || !OrderLines.Any())
         {
-            // === Message if above is true ===
             Log("You must be logged in and have items in the cart.");
             return;
         }
 
-        // === Creates the order. Stores the admin, time and quantity ===
         var order = new Order
         {
             AccountUsername = _currentUser.Username,
@@ -266,299 +290,396 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             }).ToList()
         };
 
-        // === save the order in the database and show the latest order ===
+
         _appDbContext.Orders.Add(order);
         await _appDbContext.SaveChangesAsync();
         LoadLatestOrderFromDatabase();
 
-        // === Displays each product ordered === 
         Log("Order placed and saved to database.");
         foreach (var line in order.OrderLines)
             Log($" - {line.ProductName} x{line.Quantity}");
 
-        // Transfer the order to the database tab ===
+        // Overfør til databasen-fanen
         LastOrderProducts.Clear();
         foreach (var item in OrderLines)
             LastOrderProducts.Add(new ProductViewModel(item.Name, item.Quantity));
 
-        // === Empties the order === 
+        // Ryd kurven
         OrderLines.Clear();
 
-        // === Reload the order history === 
+        // Genindlæs ordrer
         LoadOrdersForUser(_currentUser);
 
-        // === Change to the database tab ===
+        // Skift til "Database"-fanen
         SelectedTabIndex = 2;
 
         UpdateCanExecute();
     }
 
-    // === Show the latest order === 
+// Indlæser den seneste ordre fra databasen
+// og viser den i Database-fanen
     private void LoadLatestOrderFromDatabase()
     {
-        // === Remove what was shown before === 
+        // Rydder den nuværende visning af ordrelinjer i UI
         DatabaseOrderLines.Clear();
 
-        // === Finding the latest order === 
+        // Henter den nyeste ordre fra databasen
+        // Include sikrer at ordrelinjer også indlæses
         var order = _appDbContext.Orders
             .Include(o => o.OrderLines)
             .OrderByDescending(o => o.CreatedAt)
             .FirstOrDefault();
 
-        // === Stop if there are no orders == 
+        // Hvis der ikke findes nogen ordre, afsluttes metoden
         if (order == null)
             return;
 
-        // == Show all the products in the order === 
+        // Gennemgår alle ordrelinjer i den seneste ordre
         foreach (var line in order.OrderLines)
         {
+            // Tilføjer hver ordrelinje til ObservableCollection
+            // så UI automatisk opdateres
             DatabaseOrderLines.Add(line);
         }
     }
 
-    // === Previous orders ===
+// Indlæser alle ordrer for den aktuelle bruger
+// og viser dem i Admin-fanen
     private void LoadOrdersForUser(Account user)
     {
-        // === Check if anyone is logged in or the username is empty ===
+        // Stopper hvis brugeren ikke findes eller ikke har et brugernavn
         if (user == null || string.IsNullOrEmpty(user.Username))
             return;
 
-        // === Removes orders from other users === 
+        // Rydder tidligere viste ordrer i UI
         PreviousOrders.Clear();
 
-        // === Finding all the orders for this user and shows the newest in the top === 
+        // Henter alle ordrer fra databasen for den valgte bruger
+        // Include bruges for også at hente ordrelinjer
         var orders = _appDbContext.Orders
             .Where(o => o.AccountUsername == user.Username)
             .Include(o => o.OrderLines)
             .OrderByDescending(o => o.CreatedAt)
             .ToList();
 
-        // === For all orders, a summary incl. order number, date and quantity is shown === 
+        // Gennemgår hver ordre og konverterer den til et ViewModel
         foreach (var order in orders)
         {
             PreviousOrders.Add(new OrderViewModel
             {
+                // Viser ordrenummer
                 OrderId = order.Id,
+
+                // Viser oprettelsesdato i læsevenligt format
                 CreatedAt = order.CreatedAt.ToShortDateString(),
+
+                // Beregner samlet antal produkter i ordren
                 TotalQuantity = order.OrderLines.Sum(l => l.Quantity)
             });
         }
     }
 
-    // === Create user ===
+// Opretter en ny bruger, når "Create user"-knappen trykkes
     private void CreateUserButton_OnClick(object? sender, RoutedEventArgs e)
     {
-        // === Read the username, password and if the user is admin === 
+        // Henter brugernavn fra inputfeltet
         var username = CreateUserUsername.Text;
+
+        // Henter password fra inputfeltet
         var password = CreateUserPassword.Text;
+
+        // Aflæser om brugeren skal være admin
+        // ?? false sikrer, at værdien ikke bliver null
         var isAdmin = CreateUserIsAdmin.IsChecked ?? false;
 
-        // === Stop if the username or the password is not written ===
+        // Tjekker om brugernavn eller password mangler
         if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password))
         {
-            // === Message ===
             Log("Username and password are required.");
             return;
         }
 
-        // === Check if other has this username ===
+        // Tjekker om brugernavnet allerede findes i databasen
         if (_accountService.UsernameExistsAsync(username).Result)
         {
-            // === Message ===
             Log("Username already exists.");
             return;
         }
 
-        // === Refister the new user in the database ===
+        // Opretter den nye bruger i databasen
         _accountService.NewAccountAsync(username, password, isAdmin).Wait();
-        // === Message ===
+
+        // Skriver besked i loggen
         Log($"User '{username}' created (Admin: {isAdmin})");
 
-        // === Clear the fields ===
+        // Rydder inputfelter efter oprettelse
         CreateUserUsername.Text = "";
         CreateUserPassword.Text = "";
         CreateUserIsAdmin.IsChecked = false;
     }
 
-    // === Admin confirms order is completed ===
+// Sender den aktuelle ordre til robotten
     private void OnConfirmOrderCompleted()
     {
+        // Kører robot-kommandoen i en baggrundstråd
+        // så UI ikke fryser
         Task.Run(() =>
         {
-            // === Add up how many components the order contains in total ===
-            int a = DatabaseOrderLines.Where(x => x.ProductName == "Component A").Sum(x => x.Quantity);
-            int b = DatabaseOrderLines.Where(x => x.ProductName == "Component B").Sum(x => x.Quantity);
-            int c = DatabaseOrderLines.Where(x => x.ProductName == "Component C").Sum(x => x.Quantity);
+            // Tæller samlet antal af hver komponent i ordren
+            int a = DatabaseOrderLines
+                .Where(x => x.ProductName == "Component A")
+                .Sum(x => x.Quantity);
 
-            // === Send to robot === 
+            int b = DatabaseOrderLines
+                .Where(x => x.ProductName == "Component B")
+                .Sum(x => x.Quantity);
+
+            int c = DatabaseOrderLines
+                .Where(x => x.ProductName == "Component C")
+                .Sum(x => x.Quantity);
+
+            // Sender én samlet ordre til robotten
+            // (antal A, B og C)
             RobotConnectionTest.RunOrder(a, b, c);
         });
 
-        // === Message ===
+        // Logger handlingen i UI
         Log("Order sent to robot (one combined program)...");
     }
-
-    // === When the robot has finished the order ===
+// Fjerner den seneste ordre fra databasen
+// efter den er blevet behandlet
     private async void OnConfirmOrderRemoveFromDatabase()
     {
-        // === Find the latest order in the database === 
+        // Finder den nyeste ordre i databasen
         var latestOrder = await _appDbContext.Orders
             .Include(o => o.OrderLines)
             .OrderByDescending(o => o.CreatedAt)
             .FirstOrDefaultAsync();
 
-        // === Show message if there are no orders ===
+        // Hvis der ikke findes nogen ordre, stop
         if (latestOrder == null)
         {
             Log("No order to remove.");
             return;
         }
 
-        // === Remove all products in the order, deleting the order and removes the order from the database tab ===
+        // Fjerner først alle ordrelinjer
         _appDbContext.OrderLines.RemoveRange(latestOrder.OrderLines);
+
+        // Fjerner selve ordren
         _appDbContext.Orders.Remove(latestOrder);
+
+        // Gemmer ændringerne i databasen
         await _appDbContext.SaveChangesAsync();
 
-        // === Updates the display === 
+        // UI-opdatering skal ske på UI-thread
         await Dispatcher.UIThread.InvokeAsync(() =>
         {
-            DatabaseOrderLines.Clear(); 
+            // Rydder visningen i Database-fanen
+            DatabaseOrderLines.Clear();
+
+            // Opdaterer listen over tidligere ordrer
             LoadOrdersForUser(_currentUser);
         });
-            
-       // === Message ===
+
+        // Logger handlingen
         Log("Latest order removed from database.");
     }
-
-
-
+    
+// Sletter databasen og opretter den igen med eksempeldata
     private void RecreateDatabaseButton_OnClick(object? sender, RoutedEventArgs e)
     {
+        // Sletter databasen asynkront (ignorerer returværdi)
         _ = _appDbContext.Database.EnsureDeletedAsync();
+
+        // Opretter databasen igen og indsætter eksempelbrugere
         _ = EnsureDatabaseCreatedWithExampleDataAsync();
+
+        // Skriver besked i loggen
         Log("Database recreated.");
     }
 
-    // === Recreate database button by deleting and creating a new database ===
+// Skifter til fanen "Create Order", når knappen trykkes
     private void OnPlaceOrderClick(object? sender, RoutedEventArgs e)
     {
+        // Logger handlingen
         Log("Opened new order page.");
+
+        // 3 svarer til fanen "Create Order"
         SelectedTabIndex = 3;
     }
 
-    // === Clear log button ===
+// Rydder log-visningen i UI
     private void ClearLogButton_OnClick(object? sender, RoutedEventArgs e)
     {
+        // Fjerner al tekst i log-feltet
         LogOutput.Text = "";
     }
 
-    // === Place order button ===
+// Opdaterer om kommandoer (fx PlaceOrder) må udføres
     private void UpdateCanExecute()
     {
+        // Tvinger UI til at genberegne CanExecute
         PlaceOrderCommand?.RaiseCanExecuteChanged();
     }
 
-    // === When clicking a button === 
+// Eksempel på en simpel klik-handler (bruges evt. til test)
     private void OnButtonClick(object? sender, RoutedEventArgs e)
     {
+        // Skriver besked i konsollen
         Console.WriteLine("Process order button clicked.");
     }
 
-    // === Messages in the log ===
+    // Skriver en besked til loggen med tidspunkt
     private void Log(string message)
     {
+        // Tilføjer tidsstempel og besked til log-output
         LogOutput.Text += $"{DateTime.Now:HH:mm:ss} | {message}\n";
     }
-}
 
 
-// === Viewmodel ===
-public class OrderViewModel
-{
-    public int OrderId { get; set; }
-    public string CreatedAt { get; set; } = "";
-    public int TotalQuantity { get; set; }
-}
-
-// === Updating the number displayed when a value is changed ===
-public class ProductViewModel : INotifyPropertyChanged
-{
-    public string Name { get; }
-
-    private int _quantity;
-    public int Quantity
+// === ViewModel for visning af ordrer i UI ===
+// Bruges i Admin-fanen til at vise tidligere ordrer
+    public class OrderViewModel
     {
-        get => _quantity;
-        set
+        // Ordre-ID fra databasen
+        // Bruges til identifikation og visning i UI
+        public int OrderId { get; set; }
+
+        // Dato for hvornår ordren blev oprettet
+        // Gemmes som string for nem visning i UI
+        public string CreatedAt { get; set; } = "";
+
+        // Samlet antal produkter i ordren
+        // Beregnes ud fra ordrelinjerne
+        public int TotalQuantity { get; set; }
+    }
+
+
+// ViewModel for et produkt i UI
+// Implementerer INotifyPropertyChanged så UI automatisk opdateres
+    public class ProductViewModel : INotifyPropertyChanged
+    {
+        // Navnet på produktet (fx "Component A")
+        // Har kun getter, da navnet ikke ændres efter oprettelse
+        public string Name { get; }
+
+        // Privat backing field til Quantity
+        private int _quantity;
+
+        // Antal af produktet
+        // Bruges i UI til at vise og ændre mængde
+        public int Quantity
         {
-            if (_quantity != value)
+            get => _quantity;
+            set
             {
-                _quantity = value;
-                OnPropertyChanged();
+                // Sikrer at UI kun opdateres hvis værdien ændres
+                if (_quantity != value)
+                {
+                    _quantity = value;
+
+                    // Giver besked til UI om at Quantity er ændret
+                    OnPropertyChanged();
+                }
             }
+        }
+
+        // Constructor der sætter navn og start-antal
+        public ProductViewModel(string name, int quantity = 0)
+        {
+            Name = name;
+            Quantity = quantity;
+        }
+
+        // Event som UI lytter på for ændringer
+        public event PropertyChangedEventHandler? PropertyChanged;
+
+        // Metode der udløser PropertyChanged-eventet
+        // [CallerMemberName] betyder at property-navnet sendes automatisk
+        private void OnPropertyChanged([CallerMemberName] string? name = null)
+            => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+    }
+
+// === RelayCommand ===
+// Generel command-klasse der bruges til at forbinde knapper i UI
+// med metoder i ViewModel (MVVM-mønster)
+    public class RelayCommand : ICommand
+    {
+        // Metoden der udføres når commanden aktiveres
+        private readonly Action _execute;
+
+        // Valgfri logik der bestemmer om commanden må udføres
+        private readonly Func<bool>? _canExecute;
+
+        // Constructor der modtager:
+        // - execute: hvad der skal ske ved klik
+        // - canExecute: hvornår knappen må være aktiv
+        public RelayCommand(Action execute, Func<bool>? canExecute = null)
+        {
+            _execute = execute;
+            _canExecute = canExecute;
+        }
+
+        // Event som UI lytter på for at opdatere knappers enabled/disabled-tilstand
+        public event EventHandler? CanExecuteChanged;
+
+        // Kaldes af UI for at tjekke om commanden må udføres
+        public bool CanExecute(object? parameter)
+            => _canExecute == null || _canExecute();
+
+        // Kaldes når brugeren klikker på knappen
+        public void Execute(object? parameter)
+            => _execute();
+
+        // Tvinger UI til at genberegne CanExecute
+        // Bruges når data ændrer sig (fx login eller ordreindhold)
+        public void RaiseCanExecuteChanged()
+        {
+            CanExecuteChanged?.Invoke(this, EventArgs.Empty);
         }
     }
 
-    // === Project view model ===
-    public ProductViewModel(string name, int quantity = 0)
+// === RelayCommand<T> ===
+// Generisk command-klasse der bruges når en command
+// skal modtage et parameter (fx et produkt)
+    public class RelayCommand<T> : ICommand
     {
-        Name = name;
-        Quantity = quantity;
+        // Metoden der udføres ved klik og modtager et parameter af typen T
+        private readonly Action<T> _execute;
+
+        // Valgfri logik der bestemmer om commanden må udføres
+        private readonly Func<T, bool>? _canExecute;
+
+        // Constructor der modtager:
+        // - execute: hvad der skal ske ved klik (med parameter)
+        // - canExecute: hvornår commanden må udføres
+        public RelayCommand(Action<T> execute, Func<T, bool>? canExecute = null)
+        {
+            _execute = execute;
+            _canExecute = canExecute;
+        }
+
+        // Event som UI lytter på for at opdatere enabled/disabled-tilstand
+        public event EventHandler? CanExecuteChanged;
+
+        // Kaldes af UI for at tjekke om commanden må udføres
+        // Tjekker samtidig om parameteret er af typen T
+        public bool CanExecute(object? parameter)
+            => _canExecute == null || parameter is T;
+
+        // Kaldes når brugeren klikker på knappen
+        // Parameteret castes til T før metoden udføres
+        public void Execute(object? parameter)
+        {
+            if (parameter is T value)
+                _execute(value);
+        }
+
+        // Tvinger UI til at genberegne CanExecute
+        public void RaiseCanExecuteChanged()
+        {
+            CanExecuteChanged?.Invoke(this, EventArgs.Empty);
+        }
     }
-
-    // == Automatically updates the screen ===
-    public event PropertyChangedEventHandler? PropertyChanged;
-    private void OnPropertyChanged([CallerMemberName] string? name = null)
-        => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
-}
-
-// === Connects the buttons to their actions ===
-public class RelayCommand : ICommand
-{
-    private readonly Action _execute;
-    private readonly Func<bool>? _canExecute;
-
-    public RelayCommand(Action execute, Func<bool>? canExecute = null)
-    {
-        _execute = execute;
-        _canExecute = canExecute;
-    }
-
-    public event EventHandler? CanExecuteChanged;
-    public bool CanExecute(object? parameter) => _canExecute == null || _canExecute();
-    public void Execute(object? parameter) => _execute();
-
-    public void RaiseCanExecuteChanged()
-    {
-        CanExecuteChanged?.Invoke(this, EventArgs.Empty);
-    }
-}
-
-// === Actions for pressing the buttons so the program know which item to action on ===
-public class RelayCommand<T> : ICommand
-{
-    private readonly Action<T> _execute;
-    private readonly Func<T, bool>? _canExecute;
-
-    public RelayCommand(Action<T> execute, Func<T, bool>? canExecute = null)
-    {
-        _execute = execute;
-        _canExecute = canExecute;
-    }
-
-    public event EventHandler? CanExecuteChanged;
-    public bool CanExecute(object? parameter) => _canExecute == null || parameter is T;
-
-    public void Execute(object? parameter)
-    {
-        if (parameter is T value)
-            _execute(value);
-    }
-
-    public void RaiseCanExecuteChanged()
-    {
-        CanExecuteChanged?.Invoke(this, EventArgs.Empty); 
-    }
-
-    }
-
+}    
