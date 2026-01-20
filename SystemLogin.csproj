@@ -1,4 +1,5 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<!-- This is a project file defining the project type and the libraries used in the program and the application -->
+<Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
         <OutputType>WinExe</OutputType>
         <TargetFramework>net10.0</TargetFramework>
@@ -22,3 +23,4 @@
         <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.1"/>
     </ItemGroup>
 </Project>
+
