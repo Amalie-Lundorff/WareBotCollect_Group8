@@ -1,473 +1,451 @@
-using System;
-using System.Collections.ObjectModel;
-using System.ComponentModel;
-using System.Linq;
-using System.Runtime.CompilerServices;
-using System.Threading.Tasks;
-using System.Windows.Input;
-using Avalonia.Controls;
-using Avalonia.Interactivity;
-using Avalonia.Threading;
-using Microsoft.EntityFrameworkCore;
-using SystemLogin;
-
-namespace Login;
-
-public partial class MainWindow : Window, INotifyPropertyChanged
-{
-    private AccountService _accountService;
-    private AppDbContext _appDbContext;
-    private Account? _currentUser;
-
-    public ObservableCollection<OrderViewModel> PreviousOrders { get; } = new();
-    public ObservableCollection<ProductViewModel> AvailableProducts { get; } = new();
-    public ObservableCollection<ProductViewModel> OrderLines { get; } = new();
+<!-- MainWindow.axaml
+Formål:
+- Definerer hovedvinduet og brugergrænsefladen for hele systemet
+- Samler login, administration, databasevisning og ordreoprettelse
+-->
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:Login"
+        x:Class="Login.MainWindow"
+        mc:Ignorable="d"
+        d:DesignWidth="1000"
+        d:DesignHeight="700"
+        d:DataContext="{d:DesignInstance Type=local:MainWindow, IsDesignTimeCreatable=True}"
+        x:CompileBindings="False"
+        Title="SystemLogin">
     
-    public ObservableCollection<OrderLine> DatabaseOrderLines { get; } = new();
-    
-    // === Viser seneste ordre i "Database"-fanen ===
-    public ObservableCollection<ProductViewModel> LastOrderProducts { get; } = new();
+    <!-- STYLES -->
+    <!-- Sikrer ensartet layout i hele applikationen, undgår gentagelser -->
 
-    public RelayCommand ProcessOrderCommand { get; }
-    public RelayCommand ConfirmOrderCommand { get; }
+    <Window.Styles>
+        <Style Selector="TextBox, Button, CheckBox">
+            <Setter Property="Margin" Value="5"/>
+        </Style>
+        <Style Selector="TextBlock">
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+    </Window.Styles>
 
-    
-    public event PropertyChangedEventHandler? PropertyChanged;
-    private void OnPropertyChanged([CallerMemberName] string? name = null)
-        => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+    <!--
+MAIN LAYOUT
+Grid opdeler vinduet i:
+- Øverste del: Tabs med systemfunktioner
+- Midterste del: Log-output
+- Nederste del: Kontrolknapper (logout, clear log)
+-->
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="100"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
 
-    public string CurrentUserId => _currentUser?.Username ?? "";
-    public bool IsLoggedIn => _currentUser != null;
-    public bool IsLoggedOut => _currentUser == null;
+        <!-- TABS -->
+        <!-- Formål:
+- Opdeler systemet i funktionelle områder
+- Hver fane repræsenterer et modul i systemet
+-->
+        <TabControl Grid.Row="0" Name="MainTabControl">
 
-    public RelayCommand<ProductViewModel> AddToOrderCommand { get; }
-    public RelayCommand<ProductViewModel> RemoveFromOrderCommand { get; }
-    public RelayCommand<ProductViewModel> IncreaseQtyCommand { get; }
-    public RelayCommand<ProductViewModel> DecreaseQtyCommand { get; }
-    public RelayCommand PlaceOrderCommand { get; }
+            <!-- LOGIN -->
+            <!-- Formål:
+- Login af eksisterende brugere
+- Oprettelse af nye brugere
+- Tildeling af admin-rettigheder
+-->
 
-    private int _selectedTabIndex;
-    public int SelectedTabIndex
-    {
-        get => _selectedTabIndex;
-        set
-        {
-            _selectedTabIndex = value;
-            OnPropertyChanged();
+            <TabItem Header="🔑 Login">
+                <StackPanel Margin="20" Spacing="20">
+                    <TextBlock Text="Login" FontWeight="Bold" FontSize="16"/>
+                    <TextBox Name="LoginUsername" Watermark="Username"/>
+                    <TextBox Name="LoginPassword" Watermark="Password" PasswordChar="●"/>
+                    <Button Content="Login" Width="160" Click="LoginButton_OnClick"/>
 
-            // 2 = Database-tab
-            if (_selectedTabIndex == 2)
-                LoadLatestOrderFromDatabase();
-        }
-    }
+                    <Separator/>
 
-    public MainWindow()
-    {
-        InitializeComponent();
-        DataContext = this;
+                    <TextBlock Text="Create user" FontWeight="Bold" FontSize="16"/>
+                    <TextBox Name="CreateUserUsername" Watermark="Username"/>
+                    <TextBox Name="CreateUserPassword" Watermark="Password" PasswordChar="●"/>
+                    
+                    <!-- Create user section: Opretter nye brugere i systemet. Checkbox bruges til at tildele admin-rettigheder-->
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="Is admin"/>
+                        <CheckBox Name="CreateUserIsAdmin"/>
+                    </StackPanel>
 
-        InitializeServices();
-        Loaded += OnLoaded;
+                    <Button Content="Create user ✅"
+                            Width="180"
+                            Click="CreateUserButton_OnClick"/>
+                </StackPanel>
+            </TabItem>
 
-        IncreaseQtyCommand = new RelayCommand<ProductViewModel>(p => p.Quantity++);
-        DecreaseQtyCommand = new RelayCommand<ProductViewModel>(p =>
-        {
-            if (p.Quantity > 0)
-                p.Quantity--;
-        });
+            <!-- ADMIN -->
+            <!-- Formål: Giver administrator overblik over tidligere ordrer + muliggør oprettelse af nye ordrer -->
 
-        AddToOrderCommand = new RelayCommand<ProductViewModel>(AddToOrder);
-        RemoveFromOrderCommand = new RelayCommand<ProductViewModel>(RemoveFromOrder);
-        PlaceOrderCommand = new RelayCommand(
-            PlaceOrder,
-            () => IsLoggedIn && OrderLines.Any(p => p.Quantity > 0)
-        );
+            <!-- Overskrift -->
+            <TabItem Header="🦾 Admin">
+                <Grid Margin="20">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
 
-        ProcessOrderCommand = new RelayCommand(OnConfirmOrderCompleted);
-        ConfirmOrderCommand = new RelayCommand(OnConfirmOrderRemoveFromDatabase);
+                    <!-- Opretter grid til kolonneoverskrift -->
+                    <TextBlock Text="Previous orders"
+                               FontSize="20"
+                               FontWeight="Bold"
+                               Margin="0,0,0,16"/>
 
+                    <!-- Definerer 3 kolonner i grid'et -->
+                    <Grid Grid.Row="1">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="100"/> <!-- Order ID -->
+                            <ColumnDefinition Width="150"/> <!-- Date -->
+                            <ColumnDefinition Width="100"/> <!-- Quantity -->
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Order ID" FontWeight="Bold"/>
+                        <TextBlock Text="Date" Grid.Column="1" FontWeight="Bold"/>
+                        <TextBlock Text="Quantity" Grid.Column="2" FontWeight="Bold"/>
+                    </Grid>
 
-        AvailableProducts.Add(new ProductViewModel("Component A"));
-        AvailableProducts.Add(new ProductViewModel("Component B"));
-        AvailableProducts.Add(new ProductViewModel("Component C"));
-    }
+                    <ItemsControl Grid.Row="2" ItemsSource="{Binding PreviousOrders}"> <!-- dynamisk liste af elementer, henter data fra ViewModel -->
+                        <ItemsControl.ItemTemplate> <!-- Definerer hvordan ét element i listen vises, genbruges for hver ordre -->
+                            <DataTemplate> <!-- skabelon, layout for hvert dataobjekt -->
+                                <Grid> 
+                                    <Grid.ColumnDefinitions> <!-- Definerer layout for hver ordre-række -->
+                                        <ColumnDefinition Width="100"/>
+                                        <ColumnDefinition Width="150"/>
+                                        <ColumnDefinition Width="100"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="{Binding OrderId}"/> <!-- Binder tekstfeldt til OrderId, viser dens unikke ID -->
+                                    <TextBlock Text="{Binding CreatedAt}" Grid.Column="1"/> <!-- Binding createdAt, viser oprettelsesdato. Grid.column placerer tekst i kolonne -->
+                                    <TextBlock Text="{Binding TotalQuantity}" Grid.Column="2"/> <!-- Viser samlet antal komponenter i ordren -->
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
 
-    private async void OnLoaded(object? sender, RoutedEventArgs e)
-    {
-        if (await EnsureDatabaseCreatedWithExampleDataAsync())
-            Log("Database did not exist. Created a new one.");
-    }
+                    <Button Grid.Row="3"
+                            Content="Place new order"
+                            Width="240"
+                            Height="56"
+                            HorizontalAlignment="Right"
+                            Margin="0,20,0,0"
+                            Click="OnPlaceOrderClick"/> <!-- Click = event. OnPlaceOrderClick kaldes -->
+                </Grid>
+            </TabItem>
 
-    private void InitializeServices()
-    {
-        _appDbContext?.Dispose();
-        _appDbContext = new AppDbContext();
-        _accountService = new AccountService(_appDbContext, new PasswordHasher());
-    }
+<!-- DATABASE -->
+            <!-- Formål:
+- Viser den aktive ordre, som ligger i databasen
+- Bruges som kontrolpunkt før ordren behandles videre
+-->
 
-    private async Task<bool> EnsureDatabaseCreatedWithExampleDataAsync()
-    {
-        var created = await _appDbContext.Database.EnsureCreatedAsync();
-        if (!created) return false;
+<TabItem Header="🛢 Database">
+    <DockPanel Margin="20">
 
-        InitializeServices();
-        await _accountService.NewAccountAsync("admin", "admin", true);
-        await _accountService.NewAccountAsync("user", "user");
-        return true;
-    }
-    private void OnDatabaseTabSelected()
-    {
-        LoadLatestOrderFromDatabase();
-    }
+        <!-- CONFIRM BUTTON -->
+        <!--Confirm order completed: Manuel bekræftelse af at ordren er færdigbehandlet -->
 
-    private async void LoginButton_OnClick(object? sender, RoutedEventArgs e)
-    {
-        LoadOrdersForUser(_currentUser);
-        LoadLatestOrderFromDatabase();
-        UpdateCanExecute();
-
-        var username = LoginUsername.Text;
-        var password = LoginPassword.Text;
-
-        if (!await _accountService.UsernameExistsAsync(username))
-        {
-            Log("Username does not exist.");
-            return;
-        }
-
-        if (!await _accountService.CredentialsCorrectAsync(username, password))
-        {
-            Log("Password wrong.");
-            return;
-        }
-
-        _currentUser = await _accountService.GetAccountAsync(username);
-        LogoutButton.IsVisible = true;
-
-        Log($"{_currentUser.Username} logged in.");
-
-        LoginUsername.Text = "";
-        LoginPassword.Text = "";
-
-        OnPropertyChanged(nameof(IsLoggedIn));
-        OnPropertyChanged(nameof(IsLoggedOut));
-        OnPropertyChanged(nameof(CurrentUserId));
-        UpdateCanExecute();
-
-
-        LoadOrdersForUser(_currentUser);
-        UpdateCanExecute();
-    }
-
-    private void LogoutButton_OnClick(object? sender, RoutedEventArgs e)
-    {
-        _currentUser = null;
-        PreviousOrders.Clear();
-        LogoutButton.IsVisible = false;
-
-        OnPropertyChanged(nameof(IsLoggedIn));
-        OnPropertyChanged(nameof(IsLoggedOut));
-        OnPropertyChanged(nameof(CurrentUserId));
-
-        Log("Logged out.");
-        UpdateCanExecute();
-    }
-
-    private void OnGoToLoginClick(object? sender, RoutedEventArgs e)
-    {
-        SelectedTabIndex = 0;
-    }
-
-    private void AddToOrder(ProductViewModel product)
-    {
-        if (product.Quantity <= 0) return;
-
-        OrderLines.Add(new ProductViewModel(product.Name, product.Quantity));
-        product.Quantity = 0;
-
-        UpdateCanExecute();
-    }
-
-    private void RemoveFromOrder(ProductViewModel product)
-    {
-        OrderLines.Remove(product);
-        UpdateCanExecute();
-    }
-
-    private async void PlaceOrder()
-    {
-        if (_currentUser == null || !OrderLines.Any())
-        {
-            Log("You must be logged in and have items in the cart.");
-            return;
-        }
-
-        var order = new Order
-        {
-            AccountUsername = _currentUser.Username,
-            CreatedAt = DateTime.Now,
-            OrderLines = OrderLines.Select(p => new OrderLine
-            {
-                ProductName = p.Name,
-                Quantity = p.Quantity
-            }).ToList()
-        };
+        <Button Content="Confirm order completed"
+                DockPanel.Dock="Bottom"
+                HorizontalAlignment="Right"
+                Margin="0,20,0,0"
+                Width="200"
+                Height="32"
+                Background="Green"
+                Foreground="White"
+                Command="{Binding DataContext.ConfirmOrderCommand, 
+                  RelativeSource={RelativeSource AncestorType=Window}}"/>
+        <!-- Når knappen trykkes, kaldes ConfirmOrderCommand som ligger i hovedvinduets kode -->
 
 
-        _appDbContext.Orders.Add(order);
-        await _appDbContext.SaveChangesAsync();
-        LoadLatestOrderFromDatabase();
+        <!-- MAIN GRID -->
+        <!-- Opdeler database-visningen i:Overskrift, kolonneoverskrifter ordredata -->
 
-        Log("Order placed and saved to database.");
-        foreach (var line in order.OrderLines)
-            Log($" - {line.ProductName} x{line.Quantity}");
+        <!-- Rækker i grid -->
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
 
-        // Overfør til databasen-fanen
-        LastOrderProducts.Clear();
-        foreach (var item in OrderLines)
-            LastOrderProducts.Add(new ProductViewModel(item.Name, item.Quantity));
+            <!-- Kolonner i grid -->
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="150"/>
+                <ColumnDefinition Width="200"/>
+            </Grid.ColumnDefinitions>
 
-        // Ryd kurven
-        OrderLines.Clear();
+            <!-- ORDER HEADER -->
+            <!-- Viser hvilken ordre der arbejdes med -->
+            <TextBox Grid.Row="0"
+                     Grid.ColumnSpan="2"
+                     Text="Order"
+                     FontSize="17"
+                     TextAlignment="Center"
+                     Background="#FF120F75"
+                     Foreground="White"
+                     Height="32"
+                     Width="350"
+                     HorizontalAlignment="Center"
+                     Margin="0,10"/>
 
-        // Genindlæs ordrer
-        LoadOrdersForUser(_currentUser);
+            <!-- COLUMN HEADERS -->
+            <TextBox Grid.Row="1"
+                     Grid.Column="0"
+                     Text="Quantity"
+                     TextAlignment="Center"
+                     FontWeight="Bold"
+                     Foreground="#FF04006B"
+                     Height="32"
+                     Margin="0,5"/>
 
-        // Skift til "Database"-fanen
-        SelectedTabIndex = 2;
+            <TextBox Grid.Row="1"
+                     Grid.Column="1"
+                     Text="Component"
+                     TextAlignment="Center"
+                     FontWeight="Bold"
+                     Foreground="#FF04006B"
+                     Height="32"
+                     Margin="0,5"/>
 
-        UpdateCanExecute();
-    }
-
-    private void LoadLatestOrderFromDatabase()
-    {
-        DatabaseOrderLines.Clear();
-
-        var order = _appDbContext.Orders
-            .Include(o => o.OrderLines)
-            .OrderByDescending(o => o.CreatedAt)
-            .FirstOrDefault();
-
-        if (order == null)
-            return;
-
-        foreach (var line in order.OrderLines)
-        {
-            DatabaseOrderLines.Add(line);
-        }
-    }
-
-    private void LoadOrdersForUser(Account user)
-    {
-        if (user == null || string.IsNullOrEmpty(user.Username))
-            return;
-
-        PreviousOrders.Clear();
-
-        var orders = _appDbContext.Orders
-            .Where(o => o.AccountUsername == user.Username)
-            .Include(o => o.OrderLines)
-            .OrderByDescending(o => o.CreatedAt)
-            .ToList();
-
-        foreach (var order in orders)
-        {
-            PreviousOrders.Add(new OrderViewModel
-            {
-                OrderId = order.Id,
-                CreatedAt = order.CreatedAt.ToShortDateString(),
-                TotalQuantity = order.OrderLines.Sum(l => l.Quantity)
-            });
-        }
-    }
-
-    private void CreateUserButton_OnClick(object? sender, RoutedEventArgs e)
-    {
-        var username = CreateUserUsername.Text;
-        var password = CreateUserPassword.Text;
-        var isAdmin = CreateUserIsAdmin.IsChecked ?? false;
-
-        if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password))
-        {
-            Log("Username and password are required.");
-            return;
-        }
-
-        if (_accountService.UsernameExistsAsync(username).Result)
-        {
-            Log("Username already exists.");
-            return;
-        }
-
-        _accountService.NewAccountAsync(username, password, isAdmin).Wait();
-        Log($"User '{username}' created (Admin: {isAdmin})");
-
-        CreateUserUsername.Text = "";
-        CreateUserPassword.Text = "";
-        CreateUserIsAdmin.IsChecked = false;
-    }
-    private void OnConfirmOrderCompleted()
-    {
-        Task.Run(() =>
-        {
-            int a = DatabaseOrderLines.Where(x => x.ProductName == "Component A").Sum(x => x.Quantity);
-            int b = DatabaseOrderLines.Where(x => x.ProductName == "Component B").Sum(x => x.Quantity);
-            int c = DatabaseOrderLines.Where(x => x.ProductName == "Component C").Sum(x => x.Quantity);
-
-            RobotConnectionTest.RunOrder(a, b, c);
-        });
-
-        Log("Order sent to robot (one combined program)...");
-        
-        
-    }
-    private async void OnConfirmOrderRemoveFromDatabase()
-    {
-        var latestOrder = await _appDbContext.Orders
-            .Include(o => o.OrderLines)
-            .OrderByDescending(o => o.CreatedAt)
-            .FirstOrDefaultAsync();
-
-        if (latestOrder == null)
-        {
-            Log("No order to remove.");
-            return;
-        }
-
-        _appDbContext.OrderLines.RemoveRange(latestOrder.OrderLines);
-        _appDbContext.Orders.Remove(latestOrder);
-        await _appDbContext.SaveChangesAsync();
-        
-        // ✅ UI-opdatering på UI-thread
-        await Dispatcher.UIThread.InvokeAsync(() =>
-        {
-            DatabaseOrderLines.Clear(); // fjerner fra grid med det samme
-            LoadOrdersForUser(_currentUser); // opdater “Previous orders”
-        });
+            <!-- DATABASE DATA -->
+            <!-- Viser ordrelinjer dynamsik fra databasen-->
+            <ItemsControl Grid.Row="2"
+                          Grid.ColumnSpan="2"
+                          ItemsSource="{Binding DatabaseOrderLines}">
+                <ItemsControl.ItemTemplate>
+                    <!-- DataTemplate: Definerer hvordan én ordrelinje vises -->
+                    <DataTemplate>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="150"/>
+                                <ColumnDefinition Width="200"/>
+                            </Grid.ColumnDefinitions>
+                            
+                            <!-- Viser antal af komponenten -->
+                            <TextBlock Grid.Column="0"
+                                       Text="{Binding Quantity}"
+                                       TextAlignment="Center"
+                                       FontSize="14"
+                                       Height="24"/>
+                            
+                            <!-- Viser navn på komponenten -->
+                            <TextBlock Grid.Column="1"
+                                       Text="{Binding ProductName}"
+                                       TextAlignment="Center"
+                                       FontSize="14"
+                                       Height="24"/>
+                        </Grid>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
             
-       
-        Log("Latest order removed from database.");
-    }
+            <!-- Process order: Starter behandling af ordren (robot) -->
+            <Button Grid.Row="3"
+                    Grid.Column="0"
+                    Content="Process order"
+                    Width="140"
+                    Height="32"
+                    Background="#1E60FF"
+                    Foreground="White"
+                    Margin="0,20,0,0"
+                    HorizontalAlignment="Left"
+                    Command="{Binding DataContext.ProcessOrderCommand,
+                          RelativeSource={RelativeSource AncestorType=Window}}"/>
+            <!-- Starter behandling af ordren via ProcessOrderCommand -->
+            
+        </Grid>
+    </DockPanel>
+</TabItem>
 
 
+                                 <!-- CREATE ORDER -->
+            <!-- Her opretter brugeren en ny ordre ved at vælge produkter og mængder -->
+            <!-- Layout for Create Order:
+- Venstre side: brugerinfo
+- Højre side: produkter
+- Nederst: aktuel ordre og handlinger -->
 
-    private void RecreateDatabaseButton_OnClick(object? sender, RoutedEventArgs e)
-    {
-        _ = _appDbContext.Database.EnsureDeletedAsync();
-        _ = EnsureDatabaseCreatedWithExampleDataAsync();
-        Log("Database recreated.");
-    }
+            <TabItem Header="📝 Create Order">
+                <Grid Margin="20">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
 
-    private void OnPlaceOrderClick(object? sender, RoutedEventArgs e)
-    {
-        Log("Opened new order page.");
-        SelectedTabIndex = 3;
-    }
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="2*"/>
+                        <ColumnDefinition Width="3*"/>
+                    </Grid.ColumnDefinitions>
 
-    private void ClearLogButton_OnClick(object? sender, RoutedEventArgs e)
-    {
-        LogOutput.Text = "";
-    }
+                    <!-- USER INFO -->
+                    <!-- Viser hvem der er logget ind -->
 
-    private void UpdateCanExecute()
-    {
-        PlaceOrderCommand?.RaiseCanExecuteChanged();
-    }
+                    <StackPanel Grid.Row="0" Grid.Column="0">
+                        <TextBlock Text="Your information"
+                                   FontWeight="Bold"
+                                   FontSize="16"/>
+                        <!-- Vises kun hvis brugeren er logget ind -->
+                        <StackPanel IsVisible="{Binding IsLoggedIn}">
+                            <TextBlock Text="Admin ID #"/>
+                            <!-- Viser brugerens ID -->
+                            <TextBlock Text="{Binding CurrentUserId}"/>
+                        </StackPanel>
+                    </StackPanel>
 
-    private void OnButtonClick(object? sender, RoutedEventArgs e)
-    {
-        Console.WriteLine("Process order button clicked.");
-    }
+                    <!-- PRODUCTS -->
+                    <StackPanel Grid.Row="0" Grid.Column="1">
+                        <TextBlock Text="Products"
+                                   FontWeight="Bold"
+                                   FontSize="16"/>
+                        <ItemsControl ItemsSource="{Binding AvailableProducts}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="40"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
 
-    private void Log(string message)
-    {
-        LogOutput.Text += $"{DateTime.Now:HH:mm:ss} | {message}\n";
-    }
-}
+                                        <!-- Sænker antal -->
+                                        <Button Content="▼"
+                                                Command="{Binding DataContext.DecreaseQtyCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                CommandParameter="{Binding}"/>
 
-// === ViewModels ===
+                                        <!-- Øger antal -->
+                                        <Button Content="▲"
+                                                Grid.Column="1"
+                                                Command="{Binding DataContext.IncreaseQtyCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                CommandParameter="{Binding}"/>
 
-public class OrderViewModel
-{
-    public int OrderId { get; set; }
-    public string CreatedAt { get; set; } = "";
-    public int TotalQuantity { get; set; }
-}
+                                        <!-- Viser valgt antal -->
+                                        <TextBlock Grid.Column="2"
+                                                   Text="{Binding Quantity}"
+                                                   HorizontalAlignment="Center"/>
 
-public class ProductViewModel : INotifyPropertyChanged
-{
-    public string Name { get; }
+                                        <!-- Viser produktets navn -->
+                                        <TextBlock Grid.Column="3"
+                                                   Text="{Binding Name}"/>
 
-    private int _quantity;
-    public int Quantity
-    {
-        get => _quantity;
-        set
-        {
-            if (_quantity != value)
-            {
-                _quantity = value;
-                OnPropertyChanged();
-            }
-        }
-    }
+                                        <!-- Tilføjer produktet til ordren -->
+                                        <Button Grid.Column="4"
+                                                Content="Add to order 🛒"
+                                                Command="{Binding DataContext.AddToOrderCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                CommandParameter="{Binding}"/>
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
 
-    public ProductViewModel(string name, int quantity = 0)
-    {
-        Name = name;
-        Quantity = quantity;
-    }
+                    <!-- ORDER LINES -->
+                    <!-- Viser den ordre, som er ved at blive opbygget -->
+                    <StackPanel Grid.Row="2" Grid.ColumnSpan="2">
+                        <TextBlock Text="Order"
+                                   FontWeight="Bold"
+                                   FontSize="16"/>
+                        
+                        <!--ItemsControl: Viser ordrelinjer dynamisk og binder til OrderLines i ViewModel -->
+                        <ItemsControl ItemsSource="{Binding OrderLines}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="80"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
 
-    public event PropertyChangedEventHandler? PropertyChanged;
-    private void OnPropertyChanged([CallerMemberName] string? name = null)
-        => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
-}
+                                        <!-- Fjerner produkt fra ordren -->
+                                        <Button Content="Delete ❌"
+                                                Command="{Binding DataContext.RemoveFromOrderCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                CommandParameter="{Binding}"/>
+                                       
+                                        <!-- Viser antal i ordren -->
+                                        <TextBlock Grid.Column="1"
+                                                   Text="{Binding Quantity}"
+                                                   HorizontalAlignment="Center"/>
 
-// === RelayCommand classes ===
+                                        <!-- Viser produktnavn i ordren -->
+                                        <TextBlock Grid.Column="2"
+                                                   Text="{Binding Name}"/>
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
 
-public class RelayCommand : ICommand
-{
-    private readonly Action _execute;
-    private readonly Func<bool>? _canExecute;
+                    <!-- PLACE ORDER -->
+                    <!-- Afsender ordren til systemet -->
+                    <Button Grid.Row="3"
+                            Grid.Column="1"
+                            Content="Place order ✅"
+                            Width="180"
+                            Height="40"
+                            HorizontalAlignment="Right"
+                            Margin="0,20,0,0"
+                            Command="{Binding DataContext.PlaceOrderCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
 
-    public RelayCommand(Action execute, Func<bool>? canExecute = null)
-    {
-        _execute = execute;
-        _canExecute = canExecute;
-    }
+                    <!-- Vises hvis brugeren ikke er logget ind -->
+                    <TextBlock Grid.Row="4"
+                               Grid.Column="1"
+                               Foreground="Red"
+                               FontWeight="Bold"
+                               Text="You must be logged in to place an order"
+                               IsVisible="{Binding IsLoggedOut}"
+                               HorizontalAlignment="Right"/>
+                </Grid>
+            </TabItem>
+        </TabControl>
 
-    public event EventHandler? CanExecuteChanged;
-    public bool CanExecute(object? parameter) => _canExecute == null || _canExecute();
-    public void Execute(object? parameter) => _execute();
+        <!-- LOG -->
+        <!-- Viser systemets hændelser og statusbeskeder -->
+        
+        <!-- Border: Indrammer log-området visuelt -->
+        <Border Grid.Row="1"
+                BorderBrush="Black"
+                BorderThickness="0,1,0,1"
+                Background="DimGray"
+                Padding="10">
+           
+            <!--ScrollViewer: Gør det muligt at scrolle i loggen -->
+            <ScrollViewer>
+                <!-- LogOutput: Viser tekst fra systemet (log) bruges for bedre læsbarhed -->
+                <TextBlock Name="LogOutput"
+                           FontFamily="Consolas"
+                           TextWrapping="Wrap"/>
+            </ScrollViewer>
+        </Border>
 
-    public void RaiseCanExecuteChanged()
-    {
-        CanExecuteChanged?.Invoke(this, EventArgs.Empty);
-    }
-}
+        <!-- BOTTOM -->
+        <!-- BOTTOM CONTROLS:Knapper til log- og sessionstyring -->
 
-public class RelayCommand<T> : ICommand
-{
-    private readonly Action<T> _execute;
-    private readonly Func<T, bool>? _canExecute;
-
-    public RelayCommand(Action<T> execute, Func<T, bool>? canExecute = null)
-    {
-        _execute = execute;
-        _canExecute = canExecute;
-    }
-
-    public event EventHandler? CanExecuteChanged;
-    public bool CanExecute(object? parameter) => _canExecute == null || parameter is T;
-
-    public void Execute(object? parameter)
-    {
-        if (parameter is T value)
-            _execute(value);
-    }
-
-    public void RaiseCanExecuteChanged()
-    {
-        CanExecuteChanged?.Invoke(this, EventArgs.Empty); 
-    }
-    }
+        <!-- DockPanel: Placerer knapper i hver sin side -->
+        <DockPanel Grid.Row="2" Margin="8">
+            
+            <!-- Clear log: Rydder indholdet i loggen -->
+            <Button Content="Clear log"
+                    DockPanel.Dock="Left"
+                    Click="ClearLogButton_OnClick"/>
+            
+            <!-- Logout: Logger brugeren ud af systemet Vises kun når brugeren er logget ind -->
+            <Button Content="Logout"
+                    DockPanel.Dock="Right"
+                    Name="LogoutButton"
+                    IsVisible="False"
+                    Click="LogoutButton_OnClick"/>
+        </DockPanel>
+    </Grid>
+</Window>
