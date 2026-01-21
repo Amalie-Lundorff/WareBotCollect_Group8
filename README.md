@@ -25,7 +25,7 @@ Project filestructure:
 - app.manifest (application)
 - 2 x .axaml (graphical layout)
 - 2 x .csproj (configuration)
-- 3 x sqlite (using entity framework)
+- 3 x sqlite (Entity Framework)
 - 7 x .cs (logic, log in, order)
 
 Program uses:
@@ -33,6 +33,9 @@ Program uses:
 - URScript
 - GUI
 - SQLite
+
+
+
 
 
 Reference:
