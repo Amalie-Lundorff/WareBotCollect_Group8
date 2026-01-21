@@ -2,7 +2,7 @@
 This project has been designed to implement an automated order-handling solution in an industrial context. It integrates a robot, GUI, database and order-handling logic.
 The purpose of the system is to enable an admin to create and initiate orders by programmed pick-up and placement positiont. Once the order has been completed, the admin must confirm the completion to process the next order.
 
-System overview:
+System overview.
 The solution consists of four main parts:
 1. GUI (used for login, order creation, overview of previous orders and completed order confirmation)
 2. Database (stores users, orders and content in the order)
@@ -32,7 +32,7 @@ Program uses:
 - C# 
 - URScript
 - GUI
-- SQLite
+- SQLite (Entity Framework)
 
 
 Reference:
